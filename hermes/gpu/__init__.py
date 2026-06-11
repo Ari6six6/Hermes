@@ -1,0 +1,39 @@
+"""GPU box state: ~/.hermes/gpu.json plus helpers to rebuild an endpoint."""
+
+from __future__ import annotations
+
+import json
+
+from hermes.config import hermes_home
+
+
+def gpu_state_path():
+    return hermes_home() / "gpu.json"
+
+
+def load_gpu_state() -> dict:
+    path = gpu_state_path()
+    if not path.exists():
+        return {}
+    try:
+        return json.loads(path.read_text())
+    except (json.JSONDecodeError, OSError):
+        return {}
+
+
+def save_gpu_state(state: dict) -> None:
+    hermes_home().mkdir(parents=True, exist_ok=True)
+    gpu_state_path().write_text(json.dumps(state, indent=2) + "\n")
+
+
+def endpoint_from_state(state: dict):
+    from hermes.gpu.ssh import SSHEndpoint
+
+    if not state.get("host"):
+        return None
+    return SSHEndpoint(
+        host=state["host"],
+        port=int(state.get("port", 22)),
+        user=state.get("user", "root"),
+        remote_workspace=state.get("remote_workspace", "~/hermes-workspace"),
+    )
