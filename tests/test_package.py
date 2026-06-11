@@ -60,3 +60,19 @@ def test_system_prompt_renders(project, cfg):
     assert "testproj" in system
     assert "131072" in system
     assert "internet access goes through the phone" in system.lower()
+    assert "Managed hosts: none" in system  # default when none registered
+
+
+def test_system_prompt_lists_managed_hosts(project, cfg):
+    env = {"managed_hosts": "web=root@1.2.3.4:22 (primary web)"}
+    messages = package.assemble(project, "x", env, cfg)
+    assert "web=root@1.2.3.4:22" in messages[0]["content"]
+
+
+def test_config_saved_private(cfg):
+    import stat
+
+    from hermes.config import config_path
+
+    cfg.save()
+    assert stat.S_IMODE(config_path().stat().st_mode) == 0o600

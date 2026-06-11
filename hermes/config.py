@@ -72,6 +72,7 @@ class Config:
         home = hermes_home()
         home.mkdir(parents=True, exist_ok=True)
         config_path().write_text(json.dumps(self.data, indent=2) + "\n")
+        os.chmod(config_path(), 0o600)  # holds vast_api_key
         if not persona_path().exists():
             persona_path().write_text(DEFAULT_PERSONA)
 

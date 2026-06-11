@@ -16,11 +16,17 @@ from pathlib import Path
 import httpx
 
 from hermes import __version__, agent
+from hermes import hosts as hosts_mod
 from hermes.config import Config, hermes_home, persona_path
-from hermes.gpu import endpoint_from_state, load_gpu_state, save_gpu_state
-from hermes.gpu.ssh import SSHEndpoint, SSHError, kill_pid, parse_ssh_string, pid_alive
+from hermes.gpu import (
+    endpoint_from_state,
+    load_gpu_state,
+    probe_net_isolation,
+    save_gpu_state,
+)
 from hermes.llm import make_backend
 from hermes.project import Project, ProjectError
+from hermes.ssh import SSHEndpoint, SSHError, kill_pid, parse_ssh_string, pid_alive
 
 BANNER = f"hermes v{__version__} — type `help`"
 
@@ -175,10 +181,18 @@ def cmd_gpu(cfg, args: str) -> None:
             print("ssh check failed — is your key registered with Vast.ai?")
             return
         ep.run(f"mkdir -p {ep.remote_workspace}")
+        isolated = probe_net_isolation(ep)
+        print("network isolation: " + (
+            "kernel-level (unshare)" if isolated
+            else "regex deny-list only (unshare unavailable in this container)"
+        ))
+        if state.get("tunnel_pid"):  # don't orphan a tunnel to the old box
+            kill_pid(state["tunnel_pid"])
         state = {
             "instance_id": instance_id,
             "host": host, "port": port, "user": user,
             "remote_workspace": ep.remote_workspace,
+            "net_isolation": isolated,
             "tunnel_pid": 0, "served_ctx": 0,
         }
         save_gpu_state(state)
@@ -190,6 +204,10 @@ def cmd_gpu(cfg, args: str) -> None:
         if ep is None:
             print("not attached — `gpu attach` first")
             return
+        if "net_isolation" not in state:  # attached with an older version
+            state["net_isolation"] = probe_net_isolation(ep)
+            save_gpu_state(state)
+            ep = endpoint_from_state(state)
         try:
             gpus = provision.detect_gpus(ep)
             plan = provision.plan_serve(gpus, cfg)
@@ -244,6 +262,8 @@ def cmd_gpu(cfg, args: str) -> None:
         if state.get("tunnel_pid"):
             kill_pid(state["tunnel_pid"])
             state["tunnel_pid"] = 0
+        if ep:
+            ep.close_master()  # don't leave the multiplexed ssh around
         if state.get("instance_id") and cfg.get("vast_api_key"):
             answer = input(f"stop Vast instance {state['instance_id']} (stops billing)? [y/N] ")
             if answer.strip().lower() == "y":
@@ -257,6 +277,53 @@ def cmd_gpu(cfg, args: str) -> None:
         save_gpu_state(state)
     else:
         print("usage: gpu attach [sshstr] | serve | status | tunnel | down")
+
+
+def cmd_host(cfg, args: str) -> None:
+    parts = args.split()
+    sub = parts[0] if parts else "list"
+    hosts = hosts_mod.load_hosts()
+
+    if sub == "add" and len(parts) >= 3:
+        name = parts[1]
+        if not hosts_mod.HOST_NAME_RE.match(name):
+            print("host name must match [A-Za-z0-9_-]{1,32}")
+            return
+        # ssh:// form leaves room for a trailing note; a pasted `ssh -p ...`
+        # command consumes the whole rest of the line.
+        if parts[2].startswith("ssh://"):
+            sshstr, note = parts[2], " ".join(parts[3:])
+        else:
+            sshstr, note = " ".join(parts[2:]), ""
+        try:
+            user, host, port = parse_ssh_string(sshstr)
+        except SSHError as e:
+            print(e)
+            return
+        ep = SSHEndpoint(host=host, port=port, user=user)
+        print(f"checking ssh {user}@{host}:{port} ...")
+        if not ep.check():
+            print("warning: ssh check failed — saving anyway (server may be down)")
+        hosts[name] = {"host": host, "port": port, "user": user, "note": note}
+        hosts_mod.save_hosts(hosts)
+        print(f"host '{name}' registered. The agent reaches it with "
+              f"host_shell/host_read/host_write (reads free, writes ask you).")
+
+    elif sub == "rm" and len(parts) == 2:
+        if hosts.pop(parts[1], None) is None:
+            print(f"no such host: {parts[1]}")
+            return
+        hosts_mod.save_hosts(hosts)
+        print(f"host '{parts[1]}' removed.")
+
+    elif sub == "list" or not parts:
+        if not hosts:
+            print("(no managed hosts — `host add <name> ssh://user@host[:port]`)")
+        for name, rec in sorted(hosts.items()):
+            note = f"  {rec['note']}" if rec.get("note") else ""
+            print(f"  {name}  {rec.get('user', 'root')}@{rec['host']}:{rec.get('port', 22)}{note}")
+    else:
+        print("usage: host add <name> <ssh-string> [note] | list | rm <name>")
 
 
 def cmd_config(cfg, args: str) -> None:
@@ -324,6 +391,7 @@ mission [edit]        show/edit the project mission
 notes / history [n] / summaries [n]
 tools                 list the agent's tools
 gpu attach [sshstr] | serve | status | tunnel | down   (alias: g)
+host add <name> <sshstr> [note] | list | rm <name>     your real servers
 persona edit          edit the persona appended to the system prompt
 config [key [value]]  view/set configuration
 quit                  exit
@@ -347,6 +415,8 @@ def dispatch(cfg, line: str) -> bool:
         cmd_project(cfg, rest)
     elif cmd == "gpu":
         cmd_gpu(cfg, rest)
+    elif cmd == "host":
+        cmd_host(cfg, rest)
     elif cmd == "config":
         cmd_config(cfg, rest)
     elif cmd in ("mission", "notes", "history", "summaries"):

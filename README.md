@@ -8,7 +8,11 @@ vLLM, and gives you an agent that lives across two machines:
 - **your phone** (Termux) — where the operator is, where every project lives,
   and the **only place with internet access**;
 - **the GPU box** — the model's home and the agent's disposable compute
-  sandbox. Network access from there is blocked by design.
+  sandbox. Network access from there is blocked by design — at the kernel
+  level (`unshare -n`) when the box allows it, by deny-list otherwise;
+- **your servers** (optional) — real machines you register with `host add`.
+  The agent reaches them from the phone: reads run free, anything mutating
+  asks you first.
 
 ## The stateful machine
 
@@ -51,8 +55,14 @@ hermes
 > gpu serve                     # detects GPUs, picks a tier, launches vLLM,
                                 # tunnels port 8000, waits until ready
 > run fix the parser in workspace/scraper.py and test it on the box
+> host add web ssh://root@203.0.113.7 my blog server      # optional
+> run why is nginx returning 502s on web? check the logs and config
 > gpu down                      # stop vLLM + optionally stop the instance
 ```
+
+For risky server surgery the agent can `replicate` files from a host into
+the GPU sandbox, reproduce and fix the problem there, and only then ask you
+to apply the verified change back to the real machine.
 
 `config set backend mock` lets you exercise the whole loop with no GPU.
 
@@ -82,23 +92,33 @@ automatically on small tiers.
 | read/write/edit/list files | phone, project dir | free inside the project |
 | `local_shell` | phone | **always asks you y/n** |
 | `remote_shell`, `remote_read/write` | GPU box | free — it's the sandbox; network commands blocked |
+| `host_shell`, `host_read/write` | **your servers** (via phone) | reads free; anything mutating asks you y/n |
 | `http_request`, `web_search` | **phone** | GET free; POST etc. ask you |
 | `write_note`, `finish_run` | phone | free |
 | `list_toolbox` / `equip_tool` | — | library tools load on demand |
 | `forge_tool` | phone | you review the source before it loads |
 
-The toolbox ships ready-made tools (`download_file`, `transfer`, `todo`,
-`json_query`) whose schemas don't bloat the prompt until equipped. Forged
-tools are plain Python files in `<project>/tools/`, loaded only after you
-approve the exact source (re-approval on any change).
+The toolbox ships ready-made tools (`download_file`, `transfer`,
+`replicate`, `todo`, `json_query`) whose schemas don't bloat the prompt
+until equipped. Forged tools are plain Python files in `<project>/tools/`,
+loaded only after you approve the exact source (re-approval on any change).
+Host tools only appear once you've registered a server.
 
 **The hard rule:** anything internet happens on the phone. The GPU box gets
-files pushed to it (`transfer`), never a network connection out.
+files pushed to it (`transfer`, `replicate`), never a network connection out.
+
+**Two safety polarities, on purpose.** The GPU box is disposable, so its
+gate is a deny-list: everything runs free except known network commands
+(and, where the container allows `unshare`, commands physically lose the
+network). Your servers are real, so their gate fails closed: only commands
+positively classified as read-only (`cat`, `journalctl`, `systemctl status`,
+`docker logs`, ...) run free — everything else, and every file write, shows
+you the exact command and waits for y/n.
 
 ## Layout
 
 ```
-~/.hermes/            config.json · persona.md · gpu.json · logs
+~/.hermes/            config.json (0600) · persona.md · gpu.json · hosts.json · logs
 ~/hermes-projects/<name>/
   mission.md          your standing orders (edit anytime)
   notes.md            the agent's memory notes
@@ -121,4 +141,5 @@ python -m pytest tests/
 
 Tests cover package assembly and budgets, path-escape defenses, the tool
 registry (including forging/approval), the full agent loop against a scripted
-mock backend, and the GPU tier planner.
+mock backend, the GPU tier planner, the read-only command classifier and
+host-tool gates (adversarial cases included), and the replicate relay.

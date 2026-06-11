@@ -56,7 +56,11 @@ class ToolRegistry:
         result = str(result)
         cap = ctx.cfg.get("max_tool_result_chars", 8000)
         if len(result) > cap:
-            result = result[:cap] + "\n[...tool output truncated...]"
+            result = result[:cap] + (
+                f"\n[...tool output truncated: showing {cap} of {len(result)} "
+                f"chars — what you see above is INCOMPLETE. Re-fetch in smaller "
+                f"pieces (offset/limit, head/tail, grep).]"
+            )
         return result
 
     # -- toolbox library (shipped, trusted) ----------------------------------
@@ -160,11 +164,20 @@ def _load_module_tool(path: Path, origin: str):
 
 
 def build_registry(project, cfg, confirm_fn) -> ToolRegistry:
+    from hermes import hosts as hosts_mod
     from hermes.tools import local_fs, local_shell, meta, remote, web
 
     registry = ToolRegistry()
     for module in (local_fs, local_shell, remote, web, meta):
         for t in module.TOOLS:
+            registry.register(t)
+
+    # Host tools only exist when the operator has registered a server —
+    # no schema bloat for setups that never use them.
+    if hosts_mod.load_hosts():
+        from hermes.tools import hosts as hosts_tools
+
+        for t in hosts_tools.TOOLS:
             registry.register(t)
 
     # Equipped library tools (shipped with the app — trusted).

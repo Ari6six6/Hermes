@@ -96,7 +96,10 @@ def http_request(args, ctx):
     if "html" in ctype and not args.get("raw"):
         body = html_to_text(body)
     if len(body) > MAX_BODY_CHARS:
-        body = body[:MAX_BODY_CHARS] + "\n[...truncated...]"
+        body = body[:MAX_BODY_CHARS] + (
+            f"\n[...truncated: showing {MAX_BODY_CHARS} of {len(body)} chars — "
+            f"the page continues beyond this point.]"
+        )
     return f"HTTP {resp.status_code} {ctype}\nfinal url: {resp.url}\n\n{body}"
 
 

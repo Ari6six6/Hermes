@@ -54,7 +54,10 @@ def read_file(args, ctx):
     chunk = lines[offset - 1 : offset - 1 + limit]
     out = "\n".join(f"{i:>5} {line}" for i, line in enumerate(chunk, start=offset))
     if len(out) > MAX_READ_CHARS:
-        out = out[:MAX_READ_CHARS] + "\n[...truncated — use offset/limit...]"
+        out = out[:MAX_READ_CHARS] + (
+            f"\n[...truncated: showing {MAX_READ_CHARS} of {len(out)} chars — "
+            f"the file continues. Re-read with offset/limit.]"
+        )
     return out or "(empty file)"
 
 
@@ -132,7 +135,7 @@ def list_files(args, ctx):
         else:
             lines.append(f"{rel} ({p.stat().st_size}B)")
         if len(lines) >= 200:
-            lines.append("[...truncated...]")
+            lines.append("[...truncated at 200 entries — list a narrower path.]")
             break
     return "\n".join(lines) or "(empty)"
 

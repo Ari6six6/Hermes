@@ -9,7 +9,9 @@ agent is redirected to the phone-side web tools.
 from __future__ import annotations
 
 import re
+import shlex
 
+from hermes.ssh import shell_path
 from hermes.tools.base import obj_schema, tool
 
 NETWORK_RE = re.compile(
@@ -54,14 +56,18 @@ def remote_shell(args, ctx):
     if err:
         return err
     command = args["command"]
-    if not ctx.cfg.get("allow_gpu_network", False) and NETWORK_RE.search(command):
-        return NETWORK_DENIED
+    inner = f"({command})"
+    if not ctx.cfg.get("allow_gpu_network", False):
+        if NETWORK_RE.search(command):
+            return NETWORK_DENIED
+        # The regex above is a fast, helpful first line; when the box supports
+        # network namespaces the command also physically loses the network.
+        if ctx.gpu.net_isolation:
+            inner = f"unshare -n -- sh -c {shlex.quote(command)}"
     timeout = min(int(args.get("timeout", 120)), 1800)
-    cwd = args.get("cwd") or ctx.gpu.remote_workspace
+    cwd = shell_path(args.get("cwd") or ctx.gpu.remote_workspace)
     print(f"  [gpu] $ {command}")
-    # cwd is left unquoted so `~` expands remotely; quote it yourself if it
-    # contains spaces.
-    rc, out, errout = ctx.gpu.run(f"cd {cwd} && ({command})", timeout=timeout)
+    rc, out, errout = ctx.gpu.run(f"cd {cwd} && {inner}", timeout=timeout)
     body = (out or "") + (("\n[stderr]\n" + errout) if errout else "")
     return f"exit code {rc}\n{body.strip() or '(no output)'}"
 
@@ -75,7 +81,7 @@ def remote_read(args, ctx):
     err = _need_gpu(ctx)
     if err:
         return err
-    rc, out, errout = ctx.gpu.run(f"cat {args['path']}", timeout=60)
+    rc, out, errout = ctx.gpu.run(f"cat {shell_path(args['path'])}", timeout=60)
     if rc != 0:
         return f"ERROR: {errout.strip() or 'read failed'}"
     return out

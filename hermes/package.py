@@ -62,6 +62,7 @@ def build_system_prompt(project: Project, env: dict) -> str:
         "project_dir": str(project.root),
         "remote_workspace": env.get("remote_workspace", "~/hermes-workspace"),
         "gpu_status": env.get("gpu_status", "not attached"),
+        "managed_hosts": env.get("managed_hosts", "none"),
         "context_window": f"~{ctx} tokens" if ctx else "unknown (assume modest)",
         "date": time.strftime("%Y-%m-%d"),
     }

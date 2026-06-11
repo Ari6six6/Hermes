@@ -76,3 +76,29 @@ def test_tunnel_args_pure(home):
     assert "8000:127.0.0.1:8000" in args
     assert "ExitOnForwardFailure=yes" in args
     assert "ControlMaster=no" in args  # a tunnel must not ride the multiplexed master
+
+
+def test_probe_net_isolation():
+    from conftest import FakeEndpoint
+
+    from hermes.gpu import probe_net_isolation
+
+    assert probe_net_isolation(FakeEndpoint([(0, "NETOK", "")])) is True
+    assert probe_net_isolation(FakeEndpoint([(1, "", "unshare: not permitted")])) is False
+
+
+def test_endpoint_state_carries_net_isolation(home):
+    from hermes.gpu import endpoint_from_state
+
+    state = {"host": "h", "port": 22, "user": "root", "net_isolation": True}
+    assert endpoint_from_state(state).net_isolation is True
+    assert endpoint_from_state({"host": "h"}).net_isolation is False  # old gpu.json
+
+
+def test_shell_path_quoting():
+    from hermes.ssh import shell_path
+
+    assert shell_path("~") == '"$HOME"'
+    assert shell_path("~/work space") == '"$HOME"/\'work space\''
+    assert shell_path("/plain/path") == "/plain/path"
+    assert shell_path("/tmp/$(rm -rf /)") == "'/tmp/$(rm -rf /)'"

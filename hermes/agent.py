@@ -8,6 +8,7 @@ import re
 import time
 from dataclasses import dataclass
 
+from hermes import hosts as hosts_mod
 from hermes import package
 from hermes.llm import ChatResult, LLMTransportError
 from hermes.tools import build_registry
@@ -39,6 +40,8 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
         from hermes.confirm import confirm as confirm_fn
 
     env = env or {}
+    host_records = hosts_mod.load_hosts()
+    env.setdefault("managed_hosts", hosts_mod.hosts_env_line(host_records))
     run_id, run_dir = project.new_run()
     transcript = run_dir / "transcript.jsonl"
 
@@ -56,6 +59,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
         project=project,
         cfg=cfg,
         gpu=gpu,
+        hosts={n: hosts_mod.host_endpoint(r) for n, r in host_records.items()},
         confirm=confirm_fn,
         served_ctx=env.get("context_window", 0),
     )

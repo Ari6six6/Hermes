@@ -53,14 +53,27 @@ def test_dispatch_wraps_exceptions(project, cfg, yes):
     assert out.startswith("ERROR")
 
 
-def test_output_cap(project, cfg, yes):
+def test_output_cap_announces_itself(project, cfg, yes):
     cfg.set("max_tool_result_chars", 100)
     registry = build_registry(project, cfg, yes)
     ctx = _ctx(project, cfg, yes, registry)
     (project.workspace_dir / "big.txt").write_text("z" * 5000)
     out = registry.dispatch("read_file", json.dumps({"path": "workspace/big.txt"}), ctx)
-    assert "[...tool output truncated...]" in out
-    assert len(out) < 200
+    # the model must be told the output is incomplete, and by how much
+    assert "[...tool output truncated: showing 100 of" in out
+    assert "INCOMPLETE" in out
+    assert len(out) < 400
+
+
+def test_host_tools_registered_only_with_hosts(project, cfg, yes):
+    from hermes.hosts import save_hosts
+
+    registry = build_registry(project, cfg, yes)
+    assert "host_shell" not in registry.names()
+    save_hosts({"web": {"host": "1.2.3.4", "port": 22, "user": "root", "note": ""}})
+    registry2 = build_registry(project, cfg, yes)
+    for name in ("host_shell", "host_read", "host_write"):
+        assert name in registry2.names()
 
 
 def test_forge_approve_and_persist(project, cfg, yes):
