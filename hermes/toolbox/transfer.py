@@ -16,7 +16,10 @@ TOOL = {
         "properties": {
             "direction": {"type": "string", "enum": ["push", "pull"]},
             "local_path": {"type": "string", "description": "path inside the project"},
-            "remote_path": {"type": "string", "description": "path on the GPU box"},
+            "remote_path": {
+                "type": "string",
+                "description": "path on the GPU box (relative = inside the remote workspace)",
+            },
         },
         "required": ["direction", "local_path", "remote_path"],
     },
@@ -25,7 +28,7 @@ TOOL = {
 
 def run(args, ctx):
     from hermes.paths import PathDenied, resolve_in
-    from hermes.ssh import shell_path
+    from hermes.ssh import anchored_path, shell_path
 
     if ctx.gpu is None:
         return "ERROR: no GPU box attached. Tell the operator to run `gpu attach`."
@@ -33,7 +36,8 @@ def run(args, ctx):
         local = resolve_in(ctx.project.root, args["local_path"])
     except PathDenied:
         return "DENIED: local_path must stay inside the project."
-    remote_q = shell_path(args["remote_path"])
+    remote = anchored_path(args["remote_path"], ctx.gpu.remote_workspace)
+    remote_q = shell_path(remote)
 
     if args["direction"] == "push":
         if not local.is_file():
@@ -43,7 +47,7 @@ def run(args, ctx):
         )
         if rc != 0:
             return f"ERROR: push failed: {err.strip()[-400:]}"
-        return f"pushed {local.stat().st_size} bytes to {args['remote_path']}"
+        return f"pushed {local.stat().st_size} bytes to {remote}"
 
     local.parent.mkdir(parents=True, exist_ok=True)
     rc, err = ctx.gpu.run_out_to_file(f"cat {remote_q}", local)

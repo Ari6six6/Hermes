@@ -11,7 +11,7 @@ from __future__ import annotations
 import re
 import shlex
 
-from hermes.ssh import shell_path
+from hermes.ssh import anchored_path, shell_path
 from hermes.tools.base import obj_schema, tool
 from hermes.ui import dim
 
@@ -68,7 +68,7 @@ def remote_shell(args, ctx):
         if ctx.gpu.net_isolation:
             inner = f"unshare -n -- sh -c {shlex.quote(command)}"
     timeout = min(int(args.get("timeout", 120)), 1800)
-    cwd = shell_path(args.get("cwd") or ctx.gpu.remote_workspace)
+    cwd = shell_path(anchored_path(args.get("cwd") or "", ctx.gpu.remote_workspace))
     print(dim(f"  [gpu] $ {command}"))
     rc, out, errout = ctx.gpu.run(f"cd {cwd} && {inner}", timeout=timeout)
     body = (out or "") + (("\n[stderr]\n" + errout) if errout else "")
@@ -77,15 +77,17 @@ def remote_shell(args, ctx):
 
 @tool(
     "remote_read",
-    "Read a text file from the GPU box. Text only — to move binary files or "
-    "anything large, equip the `transfer` toolbox tool.",
+    "Read a text file from the GPU box. Relative paths resolve inside the "
+    "remote workspace. Text only — to move binary files or anything large, "
+    "equip the `transfer` toolbox tool.",
     obj_schema({"path": {"type": "string"}}, ["path"]),
 )
 def remote_read(args, ctx):
     err = _need_gpu(ctx)
     if err:
         return err
-    rc, out, errout = ctx.gpu.run(f"cat {shell_path(args['path'])}", timeout=60)
+    path = anchored_path(args["path"], ctx.gpu.remote_workspace)
+    rc, out, errout = ctx.gpu.run(f"cat {shell_path(path)}", timeout=60)
     if rc != 0:
         return f"ERROR: {errout.strip() or 'read failed'}"
     return out
@@ -93,8 +95,9 @@ def remote_read(args, ctx):
 
 @tool(
     "remote_write",
-    "Write a text file on the GPU box. Text only — to move binary files or "
-    "anything large, equip the `transfer` toolbox tool.",
+    "Write a text file on the GPU box. Relative paths resolve inside the "
+    "remote workspace. Text only — to move binary files or anything large, "
+    "equip the `transfer` toolbox tool.",
     obj_schema(
         {"path": {"type": "string"}, "content": {"type": "string"}},
         ["path", "content"],
@@ -104,10 +107,11 @@ def remote_write(args, ctx):
     err = _need_gpu(ctx)
     if err:
         return err
-    rc, _, errout = ctx.gpu.write_file(args["path"], args["content"])
+    path = anchored_path(args["path"], ctx.gpu.remote_workspace)
+    rc, _, errout = ctx.gpu.write_file(path, args["content"])
     if rc != 0:
         return f"ERROR: {errout.strip() or 'write failed'}"
-    return f"wrote {len(args['content'])} chars to {args['path']} on the GPU box"
+    return f"wrote {len(args['content'])} chars to {path} on the GPU box"
 
 
 TOOLS = [remote_shell, remote_read, remote_write]
