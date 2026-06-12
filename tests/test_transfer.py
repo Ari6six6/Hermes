@@ -37,6 +37,28 @@ def test_push_quotes_awkward_remote_path(project, cfg, home):
     assert "cat > '/data/my results/a.txt'" in gpu.calls[0]
 
 
+def test_push_relative_remote_path_anchors_to_workspace(project, cfg, home):
+    (project.workspace_dir / "a.txt").write_text("x")
+    gpu = FakeEndpoint([(0, "", "")])
+    out = transfer.run(
+        {"direction": "push", "local_path": "workspace/a.txt",
+         "remote_path": "a.txt"},
+        _ctx(project, cfg, gpu),
+    )
+    assert 'cat > "$HOME"/hermes-workspace/a.txt' in gpu.calls[0]
+    assert out == "pushed 1 bytes to ~/hermes-workspace/a.txt"
+
+
+def test_pull_relative_remote_path_anchors_to_workspace(project, cfg, home):
+    gpu = FakeEndpoint([(0, "", "")], file_payload=b"y")
+    transfer.run(
+        {"direction": "pull", "local_path": "workspace/out.bin",
+         "remote_path": "out.bin"},
+        _ctx(project, cfg, gpu),
+    )
+    assert gpu.calls[0] == 'cat "$HOME"/hermes-workspace/out.bin'
+
+
 def test_push_missing_local_file(project, cfg, home):
     gpu = FakeEndpoint()
     out = transfer.run(

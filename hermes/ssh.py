@@ -41,6 +41,17 @@ def parse_ssh_string(text: str):
     raise SSHError(f"could not parse SSH string: {text!r}")
 
 
+def anchored_path(p: str, workspace: str) -> str:
+    """Resolve a remote path against the workspace. Absolute and `~` paths
+    pass through untouched; anything relative lands inside the workspace —
+    so tool paths agree with remote_shell's default cwd instead of silently
+    resolving against the SSH login dir."""
+    p = p.strip()
+    if p.startswith(("/", "~")):
+        return p
+    return f"{workspace.rstrip('/')}/{p}" if p else workspace
+
+
 def shell_path(p: str) -> str:
     """Quote a remote path for safe shell interpolation while keeping a
     leading `~`/`~/` expandable. `~user` is not supported — it comes back
