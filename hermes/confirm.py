@@ -7,21 +7,23 @@ tool source) can be inspected with 'v' before deciding.
 
 from __future__ import annotations
 
+from hermes.ui import bold, dim, yellow
+
 
 def confirm(action: str, detail: str = "", viewable: str | None = None) -> bool:
-    print(f"\n[confirm] {action}")
+    print(f"\n{bold(yellow('[confirm]'))} {bold(action)}")
     if detail:
         print(detail)
     options = "[y/n/v]" if viewable is not None else "[y/N]"
     while True:
         try:
-            answer = input(f"Allow? {options} ").strip().lower()
+            answer = input(yellow(f"Allow? {options} ")).strip().lower()
         except (EOFError, KeyboardInterrupt):
-            print("\n(denied)")
+            print(dim("\n(denied)"))
             return False
         if answer == "v" and viewable is not None:
-            print("---- source ----")
+            print(dim("---- source ----"))
             print(viewable)
-            print("---- end ----")
+            print(dim("---- end ----"))
             continue
         return answer in ("y", "yes")

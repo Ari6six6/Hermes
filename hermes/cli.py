@@ -27,8 +27,9 @@ from hermes.gpu import (
 from hermes.llm import make_backend
 from hermes.project import Project, ProjectError
 from hermes.ssh import SSHEndpoint, SSHError, kill_pid, parse_ssh_string, pid_alive
+from hermes.ui import bold, cyan, dim, green, magenta, red, yellow
 
-BANNER = f"hermes v{__version__} — type `help`"
+BANNER = f"{bold(magenta('hermes'))} {dim('v' + __version__)} — type {cyan('help')}"
 
 
 # ---------------------------------------------------------------- helpers
@@ -84,11 +85,11 @@ def _edit_file(path: Path) -> None:
 # ---------------------------------------------------------------- commands
 def cmd_run(cfg, args: str) -> None:
     if not args.strip():
-        print("usage: run <prompt>")
+        print(dim("usage: run <prompt>"))
         return
     project = _current_project(cfg)
     if project is None:
-        print("no current project — `project new <name>` or `project use <name>`")
+        print(yellow("no current project") + dim(" — `project new <name>` or `project use <name>`"))
         return
     state = load_gpu_state()
     gpu = endpoint_from_state(state)
@@ -96,8 +97,8 @@ def cmd_run(cfg, args: str) -> None:
         if state.get("host"):
             _ensure_tunnel(cfg, state)
         if not _probe_vllm(cfg):
-            print("vLLM endpoint not reachable — `gpu attach` + `gpu serve` first "
-                  "(or `config set backend mock` for a dry run).")
+            print(red("vLLM endpoint not reachable") + dim(" — `gpu attach` + `gpu serve` first "
+                  "(or `config set backend mock` for a dry run)."))
             return
     env = {
         "gpu_status": _gpu_status_line(cfg, state),
@@ -116,27 +117,27 @@ def cmd_project(cfg, args: str) -> None:
         try:
             Project.create(pdir, parts[1])
         except ProjectError as e:
-            print(e)
+            print(red(e))
             return
         cfg.set("current_project", parts[1])
         cfg.save()
-        print(f"project '{parts[1]}' created and selected. Edit its mission: `mission edit`")
+        print(green(f"project '{parts[1]}' created and selected.") + dim(" Edit its mission: `mission edit`"))
     elif sub == "use" and len(parts) > 1:
         try:
             Project.load(pdir, parts[1])
         except ProjectError as e:
-            print(e)
+            print(red(e))
             return
         cfg.set("current_project", parts[1])
         cfg.save()
-        print(f"switched to '{parts[1]}'")
+        print(green(f"switched to '{parts[1]}'"))
     else:
         current = cfg.get("current_project")
         names = Project.list_names(pdir)
         if not names:
-            print("(no projects yet — `project new <name>`)")
+            print(dim("(no projects yet — `project new <name>`)"))
         for n in names:
-            print(("* " if n == current else "  ") + n)
+            print(green("* ") + bold(n) if n == current else "  " + n)
 
 
 def cmd_gpu(cfg, args: str) -> None:
@@ -149,7 +150,7 @@ def cmd_gpu(cfg, args: str) -> None:
             try:
                 user, host, port = parse_ssh_string(parts[1])
             except SSHError as e:
-                print(e)
+                print(red(e))
                 return
             instance_id = None
         else:
@@ -157,34 +158,34 @@ def cmd_gpu(cfg, args: str) -> None:
             try:
                 instances = running_instances(cfg.get("vast_api_key", ""))
             except VastError as e:
-                print(f"{e}\n(fallback: paste it — `gpu attach ssh -p PORT root@HOST`)")
+                print(red(e) + dim("\n(fallback: paste it — `gpu attach ssh -p PORT root@HOST`)"))
                 return
             if not instances:
-                print("no running Vast.ai instances found.")
+                print(yellow("no running Vast.ai instances found."))
                 return
             if len(instances) > 1:
                 for i, inst in enumerate(instances):
-                    print(f"  [{i}] id={inst['id']} {inst['num_gpus']}x{inst['gpu_name']} ${inst['dph']:.2f}/hr")
+                    print(f"  {cyan(f'[{i}]')} id={inst['id']} {inst['num_gpus']}x{inst['gpu_name']} ${inst['dph']:.2f}/hr")
                 try:
                     pick = int(input("which? "))
                     inst = instances[pick]
                 except (ValueError, IndexError, EOFError):
-                    print("cancelled")
+                    print(yellow("cancelled"))
                     return
             else:
                 inst = instances[0]
             user, host, port = "root", inst["ssh_host"], int(inst["ssh_port"])
             instance_id = inst["id"]
         ep = SSHEndpoint(host=host, port=port, user=user)
-        print(f"checking ssh {user}@{host}:{port} ...")
+        print(dim(f"checking ssh {user}@{host}:{port} ..."))
         if not ep.check():
-            print("ssh check failed — is your key registered with Vast.ai?")
+            print(red("ssh check failed — is your key registered with Vast.ai?"))
             return
         ep.run(f"mkdir -p {ep.remote_workspace}")
         isolated = probe_net_isolation(ep)
         print("network isolation: " + (
-            "kernel-level (unshare)" if isolated
-            else "regex deny-list only (unshare unavailable in this container)"
+            green("kernel-level (unshare)") if isolated
+            else yellow("regex deny-list only (unshare unavailable in this container)")
         ))
         if state.get("tunnel_pid"):  # don't orphan a tunnel to the old box
             kill_pid(state["tunnel_pid"])
@@ -196,13 +197,13 @@ def cmd_gpu(cfg, args: str) -> None:
             "tunnel_pid": 0, "served_ctx": 0,
         }
         save_gpu_state(state)
-        print("attached. Next: `gpu serve`")
+        print(green("attached.") + dim(" Next: `gpu serve`"))
 
     elif sub == "serve":
         from hermes.gpu import provision
         ep = endpoint_from_state(state)
         if ep is None:
-            print("not attached — `gpu attach` first")
+            print(yellow("not attached — `gpu attach` first"))
             return
         if "net_isolation" not in state:  # attached with an older version
             state["net_isolation"] = probe_net_isolation(ep)
@@ -212,36 +213,38 @@ def cmd_gpu(cfg, args: str) -> None:
             gpus = provision.detect_gpus(ep)
             plan = provision.plan_serve(gpus, cfg)
         except provision.ProvisionError as e:
-            print(f"cannot serve: {e}")
+            print(red(f"cannot serve: {e}"))
             return
-        print(f"GPUs: {', '.join(plan.gpu_names)} — {plan.total_vram_gb}GB total")
+        print(f"GPUs: {cyan(', '.join(plan.gpu_names))} — {plan.total_vram_gb}GB total")
         print(f"plan: tp={plan.tensor_parallel}, context={plan.max_model_len}, "
               f"util={plan.gpu_memory_utilization}")
         for note in plan.notes:
-            print(f"note: {note}")
+            print(yellow(f"note: {note}"))
         try:
             provision.launch(ep, cfg, plan)
         except provision.ProvisionError as e:
-            print(f"launch failed: {e}")
+            print(red(f"launch failed: {e}"))
             return
         _ensure_tunnel(cfg, state)
-        print("waiting for the model to come up (first run downloads ~37GB)...")
+        print(dim("waiting for the model to come up (first run downloads ~37GB)..."))
         if provision.wait_ready(ep, cfg):
             state["served_ctx"] = plan.max_model_len
             save_gpu_state(state)
-            print(f"ready — Hermes is listening (context {plan.max_model_len}). Try: run hello")
+            print(green(f"ready — Hermes is listening (context {plan.max_model_len}).")
+                  + dim(" Try: run hello"))
         else:
-            print("timed out. Inspect with: gpu status / `remote tail -n 50 ~/vllm.log`")
+            print(red("timed out.") + dim(" Inspect with: gpu status / `remote tail -n 50 ~/vllm.log`"))
 
     elif sub == "status":
         if not state.get("host"):
-            print("not attached")
+            print(yellow("not attached"))
             return
-        print(f"box: {state['user']}@{state['host']}:{state['port']}"
-              + (f" (vast id {state['instance_id']})" if state.get("instance_id") else ""))
+        box = f"{state['user']}@{state['host']}:{state['port']}"
+        print(f"box: {cyan(box)}"
+              + (dim(f" (vast id {state['instance_id']})") if state.get("instance_id") else ""))
         print(f"tunnel: pid {state.get('tunnel_pid')} "
-              f"{'alive' if pid_alive(state.get('tunnel_pid', 0)) else 'dead'}")
-        print(f"vllm endpoint: {'UP' if _probe_vllm(cfg) else 'down'}")
+              + (green("alive") if pid_alive(state.get("tunnel_pid", 0)) else red("dead")))
+        print("vllm endpoint: " + (green("UP") if _probe_vllm(cfg) else red("down")))
         ep = endpoint_from_state(state)
         rc, out, _ = ep.run(
             "nvidia-smi --query-gpu=name,memory.used,memory.total --format=csv,noheader",
@@ -252,13 +255,14 @@ def cmd_gpu(cfg, args: str) -> None:
 
     elif sub == "tunnel":
         _ensure_tunnel(cfg, state)
-        print("tunnel " + ("up" if _probe_vllm(cfg) else "started (endpoint not answering yet)"))
+        print("tunnel " + (green("up") if _probe_vllm(cfg)
+                           else yellow("started (endpoint not answering yet)")))
 
     elif sub == "down":
         ep = endpoint_from_state(state)
         if ep:
             ep.run("kill $(cat ~/vllm.pid) 2>/dev/null; rm -f ~/vllm.pid")
-            print("vLLM stopped.")
+            print(green("vLLM stopped."))
         if state.get("tunnel_pid"):
             kill_pid(state["tunnel_pid"])
             state["tunnel_pid"] = 0
@@ -270,13 +274,13 @@ def cmd_gpu(cfg, args: str) -> None:
                 from hermes.gpu.vast import VastError, stop_instance
                 try:
                     stop_instance(cfg.get("vast_api_key"), state["instance_id"])
-                    print("instance stopped.")
+                    print(green("instance stopped."))
                 except VastError as e:
-                    print(e)
+                    print(red(e))
         state["served_ctx"] = 0
         save_gpu_state(state)
     else:
-        print("usage: gpu attach [sshstr] | serve | status | tunnel | down")
+        print(dim("usage: gpu attach [sshstr] | serve | status | tunnel | down"))
 
 
 def cmd_host(cfg, args: str) -> None:
@@ -287,7 +291,7 @@ def cmd_host(cfg, args: str) -> None:
     if sub == "add" and len(parts) >= 3:
         name = parts[1]
         if not hosts_mod.HOST_NAME_RE.match(name):
-            print("host name must match [A-Za-z0-9_-]{1,32}")
+            print(red("host name must match [A-Za-z0-9_-]{1,32}"))
             return
         # ssh:// form leaves room for a trailing note; a pasted `ssh -p ...`
         # command consumes the whole rest of the line.
@@ -298,32 +302,32 @@ def cmd_host(cfg, args: str) -> None:
         try:
             user, host, port = parse_ssh_string(sshstr)
         except SSHError as e:
-            print(e)
+            print(red(e))
             return
         ep = SSHEndpoint(host=host, port=port, user=user)
-        print(f"checking ssh {user}@{host}:{port} ...")
+        print(dim(f"checking ssh {user}@{host}:{port} ..."))
         if not ep.check():
-            print("warning: ssh check failed — saving anyway (server may be down)")
+            print(yellow("warning: ssh check failed — saving anyway (server may be down)"))
         hosts[name] = {"host": host, "port": port, "user": user, "note": note}
         hosts_mod.save_hosts(hosts)
-        print(f"host '{name}' registered. The agent reaches it with "
-              f"host_shell/host_read/host_write (reads free, writes ask you).")
+        print(green(f"host '{name}' registered.") + dim(" The agent reaches it with "
+              "host_shell/host_read/host_write (reads free, writes ask you)."))
 
     elif sub == "rm" and len(parts) == 2:
         if hosts.pop(parts[1], None) is None:
-            print(f"no such host: {parts[1]}")
+            print(red(f"no such host: {parts[1]}"))
             return
         hosts_mod.save_hosts(hosts)
-        print(f"host '{parts[1]}' removed.")
+        print(green(f"host '{parts[1]}' removed."))
 
     elif sub == "list" or not parts:
         if not hosts:
-            print("(no managed hosts — `host add <name> ssh://user@host[:port]`)")
+            print(dim("(no managed hosts — `host add <name> ssh://user@host[:port]`)"))
         for name, rec in sorted(hosts.items()):
-            note = f"  {rec['note']}" if rec.get("note") else ""
-            print(f"  {name}  {rec.get('user', 'root')}@{rec['host']}:{rec.get('port', 22)}{note}")
+            note = dim(f"  {rec['note']}") if rec.get("note") else ""
+            print(f"  {cyan(name)}  {rec.get('user', 'root')}@{rec['host']}:{rec.get('port', 22)}{note}")
     else:
-        print("usage: host add <name> <ssh-string> [note] | list | rm <name>")
+        print(dim("usage: host add <name> <ssh-string> [note] | list | rm <name>"))
 
 
 def cmd_config(cfg, args: str) -> None:
@@ -349,7 +353,7 @@ def cmd_config(cfg, args: str) -> None:
 def cmd_info(cfg, what: str, args: str) -> None:
     project = _current_project(cfg)
     if project is None:
-        print("no current project")
+        print(yellow("no current project"))
         return
     if what == "mission":
         if args.strip() == "edit":
@@ -357,15 +361,16 @@ def cmd_info(cfg, what: str, args: str) -> None:
         else:
             print(project.read_mission())
     elif what == "notes":
-        print(project.read_notes() or "(no notes)")
+        print(project.read_notes() or dim("(no notes)"))
     elif what == "history":
         n = int(args) if args.strip().isdigit() else 20
         for e in project.recent_prompts(n):
-            print(f"[{e.get('run', '?'):>4}] {e.get('ts', '')}  {e.get('text', '')[:120]}")
+            head = f"[{e.get('run', '?'):>4}] {e.get('ts', '')}"
+            print(f"{dim(head)}  {e.get('text', '')[:120]}")
     elif what == "summaries":
         n = int(args) if args.strip().isdigit() else 3
         for run_id, text in project.recent_summaries(n):
-            print(f"--- run {run_id:04d} ---\n{text}\n")
+            print(f"{cyan(f'--- run {run_id:04d} ---')}\n{text}\n")
 
 
 def cmd_tools(cfg) -> None:
@@ -373,28 +378,28 @@ def cmd_tools(cfg) -> None:
     from hermes.tools import build_registry
     project = _current_project(cfg)
     if project is None:
-        print("no current project")
+        print(yellow("no current project"))
         return
     registry = build_registry(project, cfg, confirm)
     for name in registry.names():
         t = registry._tools[name]
-        print(f"  {name} [{t.origin}]")
+        print(f"  {cyan(name)} {dim(f'[{t.origin}]')}")
     print("\nlibrary (equip via the agent's list_toolbox/equip_tool):")
     for name, t in registry.library_tools().items():
-        print(f"  {name}: {t.description[:90]}")
+        print(f"  {cyan(name)}: {t.description[:90]}")
 
 
-HELP = """\
-run <text>            start an agent run (alias: r)
-project new|use|list  manage projects (alias: p)
-mission [edit]        show/edit the project mission
-notes / history [n] / summaries [n]
-tools                 list the agent's tools
-gpu attach [sshstr] | serve | status | tunnel | down   (alias: g)
-host add <name> <sshstr> [note] | list | rm <name>     your real servers
-persona edit          edit the persona appended to the system prompt
-config [key [value]]  view/set configuration
-quit                  exit
+HELP = f"""\
+{cyan('run')} <text>            start an agent run {dim('(alias: r)')}
+{cyan('project')} new|use|list  manage projects {dim('(alias: p)')}
+{cyan('mission')} [edit]        show/edit the project mission
+{cyan('notes')} / {cyan('history')} [n] / {cyan('summaries')} [n]
+{cyan('tools')}                 list the agent's tools
+{cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
+{cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
+{cyan('persona')} edit          edit the persona appended to the system prompt
+{cyan('config')} [key [value]]  view/set configuration
+{cyan('quit')}                  exit
 """
 
 
@@ -426,7 +431,7 @@ def dispatch(cfg, line: str) -> bool:
     elif cmd == "persona":
         _edit_file(persona_path())
     else:
-        print(f"unknown command: {cmd} (try `help`)")
+        print(red(f"unknown command: {cmd}") + dim(" (try `help`)"))
     return True
 
 
@@ -436,20 +441,23 @@ def main() -> None:
     hermes_home().mkdir(parents=True, exist_ok=True)
     print(BANNER)
     project = cfg.get("current_project") or "-"
-    print(f"project: {project} · backend: {cfg.get('backend')}")
+    print(f"project: {cyan(project)} {dim('·')} backend: {cyan(cfg.get('backend'))}")
 
     session = None
+    ansi = None
     try:
         from prompt_toolkit import PromptSession
+        from prompt_toolkit.formatted_text import ANSI as ansi
         from prompt_toolkit.history import FileHistory
         session = PromptSession(history=FileHistory(str(hermes_home() / "repl_history")))
     except Exception:
         pass
 
     while True:
-        prompt_text = f"hermes({cfg.get('current_project') or '-'})> "
+        proj = cfg.get("current_project") or "-"
+        prompt_text = f"{magenta('hermes')}({cyan(proj)})> "
         try:
-            line = session.prompt(prompt_text) if session else input(prompt_text)
+            line = session.prompt(ansi(prompt_text)) if session else input(prompt_text)
         except (EOFError, KeyboardInterrupt):
             print()
             break
@@ -457,8 +465,8 @@ def main() -> None:
             if not dispatch(cfg, line):
                 break
         except Exception as e:  # the REPL must survive anything
-            print(f"error: {type(e).__name__}: {e}")
-    print("bye.")
+            print(red(f"error: {type(e).__name__}: {e}"))
+    print(dim("bye."))
 
 
 if __name__ == "__main__":

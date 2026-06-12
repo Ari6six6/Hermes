@@ -13,6 +13,7 @@ from hermes import package
 from hermes.llm import ChatResult, LLMTransportError
 from hermes.tools import build_registry
 from hermes.tools.base import ToolContext
+from hermes.ui import cyan, dim, green, red, yellow
 
 THINK_RE = re.compile(r"<(?:seed:)?think>.*?</(?:seed:)?think>\s*", re.S)
 MAX_CONSECUTIVE_ERRORS = 3
@@ -96,7 +97,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
             messages.append(_assistant_msg(result))
             for tc in result.tool_calls:
                 if tc.name != "finish_run":
-                    print(f"  → {tc.name}({_brief(tc.arguments)})")
+                    print(dim("  → ") + cyan(tc.name) + dim(f"({_brief(tc.arguments)})"))
                 tool_names_used.append(tc.name)
                 output = registry.dispatch(tc.name, tc.arguments, ctx)
                 log({"role": "tool", "name": tc.name, "content": output})
@@ -111,17 +112,17 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
             if ctx.finish_summary is not None:
                 break
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
-                print("  (circuit breaker: too many consecutive tool errors)")
+                print(yellow("  (circuit breaker: too many consecutive tool errors)"))
                 aborted = True
                 break
         else:
-            print(f"  (turn cap {max_turns} reached)")
+            print(yellow(f"  (turn cap {max_turns} reached)"))
             aborted = True
     except LLMTransportError as e:
-        print(f"\n{e}")
+        print(red(f"\n{e}"))
         aborted = True
     except KeyboardInterrupt:
-        print("\n(run interrupted)")
+        print(yellow("\n(run interrupted)"))
         aborted = True
 
     summary = ctx.finish_summary
@@ -131,7 +132,8 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
         summary = _stub_summary(prompt, tool_names_used, final_text, aborted)
 
     (run_dir / "summary.md").write_text(summary + "\n")
-    print(f"\n[run {run_id:04d} {'aborted' if aborted else 'complete'} — {turns} turn(s)]")
+    status = red("aborted") if aborted else green("complete")
+    print(f"\n{dim(f'[run {run_id:04d}')} {status} {dim(f'— {turns} turn(s)]')}")
     return RunResult(run_id, summary, final_text, turns, aborted)
 
 

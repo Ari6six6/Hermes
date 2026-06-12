@@ -10,6 +10,8 @@ import json
 import os
 from pathlib import Path
 
+from hermes.ui import yellow
+
 DEFAULTS: dict = {
     "backend": "openai",  # "openai" (vLLM endpoint) or "mock"
     "base_url": "http://127.0.0.1:8000/v1",
@@ -65,7 +67,7 @@ class Config:
                 stored = json.loads(path.read_text())
                 _deep_update(data, stored)
             except (json.JSONDecodeError, OSError) as e:
-                print(f"warning: could not read {path}: {e} — using defaults")
+                print(yellow(f"warning: could not read {path}: {e} — using defaults"))
         return cls(data)
 
     def save(self) -> None:

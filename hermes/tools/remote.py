@@ -13,6 +13,7 @@ import shlex
 
 from hermes.ssh import shell_path
 from hermes.tools.base import obj_schema, tool
+from hermes.ui import dim
 
 NETWORK_RE = re.compile(
     r"(?:^|[;&|]\s*|\bsudo\s+)"
@@ -66,7 +67,7 @@ def remote_shell(args, ctx):
             inner = f"unshare -n -- sh -c {shlex.quote(command)}"
     timeout = min(int(args.get("timeout", 120)), 1800)
     cwd = shell_path(args.get("cwd") or ctx.gpu.remote_workspace)
-    print(f"  [gpu] $ {command}")
+    print(dim(f"  [gpu] $ {command}"))
     rc, out, errout = ctx.gpu.run(f"cd {cwd} && {inner}", timeout=timeout)
     body = (out or "") + (("\n[stderr]\n" + errout) if errout else "")
     return f"exit code {rc}\n{body.strip() or '(no output)'}"

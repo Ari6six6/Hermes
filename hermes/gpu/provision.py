@@ -17,6 +17,8 @@ from dataclasses import dataclass, field
 
 import httpx
 
+from hermes.ui import dim, yellow
+
 MODEL_MAX_LEN = 524288  # Hermes 4.3 supports up to 512K
 MIN_TOTAL_GB = 44  # FP8 36B weights ~37GB + runtime overhead
 
@@ -128,9 +130,9 @@ def vllm_command(cfg, plan: ServePlan) -> str:
 def launch(endpoint, cfg, plan: ServePlan) -> None:
     rc, out, _ = endpoint.run("cat ~/vllm.pid 2>/dev/null && kill -0 $(cat ~/vllm.pid) 2>/dev/null && echo RUNNING")
     if "RUNNING" in out:
-        print("vLLM already running on the box (kill it first with `gpu down` to relaunch).")
+        print(yellow("vLLM already running on the box (kill it first with `gpu down` to relaunch)."))
         return
-    print("ensuring vLLM is installed (first time can take a few minutes)...")
+    print(dim("ensuring vLLM is installed (first time can take a few minutes)..."))
     install = (
         f"test -x {VLLM_BIN} && exit 0; "
         # python3-venv is missing on some base images — install it on demand.
@@ -144,7 +146,7 @@ def launch(endpoint, cfg, plan: ServePlan) -> None:
         raise ProvisionError(f"vLLM install failed: {err.strip()[-800:]}")
     endpoint.run(f"mkdir -p {endpoint.remote_workspace}")
     cmd = vllm_command(cfg, plan)
-    print(f"launching: {cmd}")
+    print(dim(f"launching: {cmd}"))
     rc, _, err = endpoint.run(
         "HF_HUB_ENABLE_HF_TRANSFER=1 nohup " + cmd + " > ~/vllm.log 2>&1 & echo $! > ~/vllm.pid"
     )
@@ -169,6 +171,6 @@ def wait_ready(endpoint, cfg, deadline_s: int = 1800) -> bool:
         if rc == 0 and out:
             seen_bytes += len(out.encode())
             for line in out.splitlines()[-30:]:
-                print("  | " + line[:160])
+                print(dim("  | " + line[:160]))
         time.sleep(5)
     return False

@@ -12,6 +12,7 @@ from __future__ import annotations
 from hermes.ssh import shell_path
 from hermes.tools.base import obj_schema, tool
 from hermes.tools.readonly import classify
+from hermes.ui import dim
 
 
 def _get(ctx, name):
@@ -47,7 +48,7 @@ def host_shell(args, ctx):
     timeout = min(int(args.get("timeout", 60)), 600)
     read_only, reason = classify(command)
     if read_only:
-        print(f"  [host:{args['host']}] $ {command}")
+        print(dim(f"  [host:{args['host']}] $ {command}"))
     elif not ctx.confirm(
         f"agent wants to run a command on managed host '{args['host']}' "
         f"({ep.user}@{ep.host}):",

@@ -14,6 +14,7 @@ import traceback
 from pathlib import Path
 
 from hermes.tools.base import Tool, ToolContext
+from hermes.ui import yellow
 
 TOOLBOX_DIR = Path(__file__).parent.parent / "toolbox"
 _FILENAME_RE = re.compile(r"^[A-Za-z0-9_]{1,40}\.py$")
@@ -195,10 +196,10 @@ def build_registry(project, cfg, confirm_fn) -> ToolRegistry:
         digest = _digest(source)
         t = _load_module_tool(path, origin="forged")
         if not isinstance(t, Tool):
-            print(f"warning: forged tool {path.name} disabled ({t})")
+            print(yellow(f"warning: forged tool {path.name} disabled ({t})"))
             continue
         if t.name in registry._tools:
-            print(f"warning: forged tool {path.name} collides with '{t.name}' — skipped")
+            print(yellow(f"warning: forged tool {path.name} collides with '{t.name}' — skipped"))
             continue
         if approved.get(path.name) == digest or confirm_fn(
             f"load forged tool '{t.name}' from {path.name}?", viewable=source
