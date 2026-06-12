@@ -70,6 +70,16 @@ def test_system_prompt_lists_managed_hosts(project, cfg):
     assert "web=root@1.2.3.4:22" in messages[0]["content"]
 
 
+def test_system_prompt_carries_toolbox_catalog(project, cfg):
+    # The agent must always SEE the equippable toolbox, even though the full
+    # schemas only load on equip — otherwise it concludes it lacks a tool it
+    # has. Every shipped toolbox tool should be named in the prompt.
+    system = package.assemble(project, "x", {}, cfg)[0]["content"]
+    for name in ("transfer", "replicate", "extract_code", "base64_codec", "json_query"):
+        assert f"`{name}`" in system
+    assert "equip_tool" in system
+
+
 def test_config_saved_private(cfg):
     import stat
 

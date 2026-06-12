@@ -56,6 +56,8 @@ def package_budget_chars(cfg: Config, context_window: int) -> int:
 
 
 def build_system_prompt(project: Project, env: dict) -> str:
+    from hermes.tools import toolbox_catalog
+
     template = (PROMPTS_DIR / "system.md").read_text()
     ctx = env.get("context_window") or 0
     variables = {
@@ -66,6 +68,7 @@ def build_system_prompt(project: Project, env: dict) -> str:
         "managed_hosts": env.get("managed_hosts", "none"),
         "context_window": f"~{ctx} tokens" if ctx else "unknown (assume modest)",
         "date": time.strftime("%Y-%m-%d"),
+        "toolbox_catalog": toolbox_catalog(),
     }
     system = render(template, variables)
     persona = read_persona().strip()

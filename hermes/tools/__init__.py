@@ -164,6 +164,23 @@ def _load_module_tool(path: Path, origin: str):
         return f"{type(e).__name__}: {e}"
 
 
+def toolbox_catalog() -> str:
+    """A name + one-line summary for every shipped toolbox tool, for the
+    system prompt. Schemas stay out of the prompt (equip loads those), but the
+    agent must always SEE the menu — otherwise it concludes it lacks a tool it
+    actually has."""
+    lib = ToolRegistry().library_tools()
+    if not lib:
+        return "(toolbox is empty)"
+    lines = []
+    for name in sorted(lib):
+        summary = " ".join(lib[name].description.split())
+        if len(summary) > 110:
+            summary = summary[:107].rstrip() + "..."
+        lines.append(f"- `{name}` — {summary}")
+    return "\n".join(lines)
+
+
 def build_registry(project, cfg, confirm_fn) -> ToolRegistry:
     from hermes import hosts as hosts_mod
     from hermes.tools import local_fs, local_shell, meta, remote, web
