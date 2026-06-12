@@ -130,8 +130,12 @@ def test_probe_net_isolation():
 
     from hermes.gpu import probe_net_isolation
 
-    assert probe_net_isolation(FakeEndpoint([(0, "NETOK", "")])) is True
+    # Isolated: from inside the namespace the connection attempt failed.
+    assert probe_net_isolation(FakeEndpoint([(0, "NETBLOCKED", "")])) is True
+    # unshare itself not permitted.
     assert probe_net_isolation(FakeEndpoint([(1, "", "unshare: not permitted")])) is False
+    # The dangerous case: the command ran but still reached the internet.
+    assert probe_net_isolation(FakeEndpoint([(0, "NETLEAK", "")])) is False
 
 
 def test_endpoint_state_carries_net_isolation(home):

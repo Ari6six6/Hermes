@@ -184,8 +184,10 @@ def cmd_gpu(cfg, args: str) -> None:
         ep.run(f"mkdir -p {ep.remote_workspace}")
         isolated = probe_net_isolation(ep)
         print("network isolation: " + (
-            green("kernel-level (unshare)") if isolated
-            else yellow("regex deny-list only (unshare unavailable in this container)")
+            green("kernel-level (unshare) — verified no egress from the sandbox")
+            if isolated
+            else red("unavailable — remote_shell will refuse to run here; "
+                     "`gpu serve` will decline this box")
         ))
         if state.get("tunnel_pid"):  # don't orphan a tunnel to the old box
             kill_pid(state["tunnel_pid"])
@@ -209,6 +211,15 @@ def cmd_gpu(cfg, args: str) -> None:
             state["net_isolation"] = probe_net_isolation(ep)
             save_gpu_state(state)
             ep = endpoint_from_state(state)
+        if not state.get("net_isolation") and not cfg.get("allow_gpu_network", False):
+            print(red("refusing to serve: this box can't drop the GPU sandbox's "
+                      "network at the kernel level (`unshare -n` unavailable or "
+                      "leaking), so the no-internet guarantee can't be enforced "
+                      "and remote_shell would be disabled here."))
+            print(dim("Rent a box that supports network namespaces (most do) and "
+                      "`gpu attach` it, or to put THIS box online on purpose: "
+                      "config set allow_gpu_network true"))
+            return
         try:
             gpus = provision.detect_gpus(ep)
             plan = provision.plan_serve(gpus, cfg)
