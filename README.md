@@ -9,7 +9,9 @@ vLLM, and gives you an agent that lives across two machines:
   and the **only place with internet access**;
 - **the GPU box** — the model's home and the agent's disposable compute
   sandbox. Network access from there is blocked by design — at the kernel
-  level (`unshare -n`) when the box allows it, by deny-list otherwise;
+  level (`unshare -n`), verified at attach time. A box that can't enforce
+  that gets `remote_shell` disabled (fail closed) rather than a best-effort
+  word-list, unless you deliberately put it online;
 - **your servers** (optional) — real machines you register with `host add`.
   The agent reaches them from the phone: reads run free, anything mutating
   asks you first.
@@ -91,7 +93,7 @@ automatically on small tiers.
 |---|---|---|
 | read/write/edit/list files | phone, project dir | free inside the project |
 | `local_shell` | phone | **always asks you y/n** |
-| `remote_shell`, `remote_read/write` | GPU box | free — it's the sandbox; network commands blocked |
+| `remote_shell`, `remote_read/write` | GPU box | free — it's the sandbox; network dropped at the kernel (no isolation → shell refuses) |
 | `host_shell`, `host_read/write` | **your servers** (via phone) | reads free; anything mutating asks you y/n |
 | `http_request`, `web_search` | **phone** | GET free; POST etc. ask you |
 | `write_note`, `finish_run` | phone | free |
@@ -112,9 +114,15 @@ Host tools only appear once you've registered a server.
 files pushed to it (`transfer`, `replicate`), never a network connection out.
 
 **Two safety polarities, on purpose.** The GPU box is disposable, so its
-gate is a deny-list: everything runs free except known network commands
-(and, where the container allows `unshare`, commands physically lose the
-network). Your servers are real, so their gate fails closed: only commands
+gate is permissive *about local compute*: everything runs free — but only
+because the command physically loses the network first (`unshare -n`). The
+deny-list regex is just a friendly redirect for the obvious cases (`curl`,
+`pip install`); it is **not** the security boundary, because a one-line
+python or node script opens a socket without ever matching it. So when a box
+can't provide kernel-level isolation, `remote_shell` refuses rather than run
+arbitrary code under a guarantee it can't keep (override with `config set
+allow_gpu_network true` to put the box online on purpose). Your servers are
+real, so their gate fails closed: only commands
 positively classified as read-only (`cat`, `journalctl`, `systemctl status`,
 `docker logs`, ...) run free — everything else, and every file write, shows
 you the exact command and waits for y/n.
