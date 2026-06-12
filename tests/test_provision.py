@@ -2,7 +2,10 @@ import pytest
 
 from hermes.gpu.provision import (
     MODEL_MAX_LEN,
+    VENV_DIR,
+    VLLM_BIN,
     ProvisionError,
+    launch,
     plan_serve,
     vllm_command,
 )
@@ -58,6 +61,50 @@ def test_vllm_command(cfg):
     assert "--quantization fp8" in cmd
     assert "NousResearch/Hermes-4.3-36B" in cmd
     assert "--tensor-parallel-size 1" in cmd
+
+
+def test_vllm_command_uses_venv_binary(cfg):
+    plan = plan_serve([("NVIDIA H200", 143771)], cfg)
+    # vLLM must be invoked from its isolated venv, not the system PATH.
+    assert vllm_command(cfg, plan).startswith(f"{VLLM_BIN} serve ")
+
+
+def test_launch_installs_into_isolated_venv(cfg):
+    from conftest import FakeEndpoint
+
+    ep = FakeEndpoint([
+        (0, "", ""),  # running-check: not running
+        (0, "", ""),  # install
+        (0, "", ""),  # mkdir workspace
+        (0, "", ""),  # launch
+    ])
+    launch(ep, cfg, plan_serve([("NVIDIA H200", 143771)], cfg))
+
+    install = ep.calls[1]
+    # Never install into the system Python — that's what hits the apt/RECORD
+    # uninstall failure. Everything goes through the venv.
+    assert f"python3 -m venv --system-site-packages {VENV_DIR}" in install
+    assert f"{VENV_DIR}/bin/pip install" in install
+    assert "pip install -q -U vllm" not in install  # no bare system install
+
+
+def test_launch_skips_when_already_running(cfg):
+    from conftest import FakeEndpoint
+
+    ep = FakeEndpoint([(0, "RUNNING", "")])
+    launch(ep, cfg, plan_serve([("NVIDIA H200", 143771)], cfg))
+    assert len(ep.calls) == 1  # bailed before installing
+
+
+def test_launch_raises_on_install_failure(cfg):
+    from conftest import FakeEndpoint
+
+    ep = FakeEndpoint([
+        (0, "", ""),  # not running
+        (1, "", "Cannot uninstall PyJWT 2.7.0, RECORD file not found."),
+    ])
+    with pytest.raises(ProvisionError, match="vLLM install failed"):
+        launch(ep, cfg, plan_serve([("NVIDIA H200", 143771)], cfg))
 
 
 def test_parse_ssh_strings():

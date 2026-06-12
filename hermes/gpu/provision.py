@@ -20,6 +20,17 @@ import httpx
 MODEL_MAX_LEN = 524288  # Hermes 4.3 supports up to 512K
 MIN_TOTAL_GB = 44  # FP8 36B weights ~37GB + runtime overhead
 
+# vLLM gets its own venv so pip never fights the box's apt-managed packages.
+# Installing into the system Python fails with "Cannot uninstall <pkg>, RECORD
+# file not found. Hint: The package was installed by debian." — apt packages
+# carry no RECORD for pip to remove, so any dependency vLLM wants to upgrade
+# (e.g. PyJWT) aborts the whole install. --system-site-packages keeps the box's
+# preinstalled CUDA/torch visible (no multi-GB re-download); vLLM's own
+# dependency upgrades land inside the venv, shadowing the system copies without
+# touching them.
+VENV_DIR = "~/.hermes-venv"
+VLLM_BIN = f"{VENV_DIR}/bin/vllm"
+
 # (total VRAM GB threshold, max_model_len) — first row whose threshold fits.
 CONTEXT_TIERS = [
     (56, 16384),
@@ -102,7 +113,7 @@ def detect_gpus(endpoint) -> list[tuple[str, int]]:
 
 def vllm_command(cfg, plan: ServePlan) -> str:
     parts = [
-        "vllm serve", cfg.get("model"),
+        VLLM_BIN, "serve", cfg.get("model"),
         f"--quantization {cfg.get('quantization', 'fp8')}",
         f"--tensor-parallel-size {plan.tensor_parallel}",
         f"--max-model-len {plan.max_model_len}",
@@ -120,10 +131,15 @@ def launch(endpoint, cfg, plan: ServePlan) -> None:
         print("vLLM already running on the box (kill it first with `gpu down` to relaunch).")
         return
     print("ensuring vLLM is installed (first time can take a few minutes)...")
-    rc, _, err = endpoint.run(
-        "command -v vllm >/dev/null || pip install -q -U vllm hf_transfer",
-        timeout=900,
+    install = (
+        f"test -x {VLLM_BIN} && exit 0; "
+        # python3-venv is missing on some base images — install it on demand.
+        f"python3 -m venv --system-site-packages {VENV_DIR} 2>/dev/null || "
+        f"{{ apt-get update -qq && apt-get install -y -qq python3-venv && "
+        f"python3 -m venv --system-site-packages {VENV_DIR}; }} && "
+        f"{VENV_DIR}/bin/pip install -q -U pip vllm hf_transfer"
     )
+    rc, _, err = endpoint.run(install, timeout=1800)
     if rc != 0:
         raise ProvisionError(f"vLLM install failed: {err.strip()[-800:]}")
     endpoint.run(f"mkdir -p {endpoint.remote_workspace}")
