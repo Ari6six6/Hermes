@@ -115,3 +115,13 @@ def assemble(project: Project, prompt: str, env: dict, cfg: Config) -> list[dict
 
 def summary_nudge() -> str:
     return (PROMPTS_DIR / "summary.md").read_text().strip()
+
+
+def stall_nudge(repeated: bool = False) -> str:
+    text = (PROMPTS_DIR / "stall.md").read_text().strip()
+    if repeated:
+        text += (
+            "\n\nYou have now sent essentially the same message twice without "
+            "acting. Stop announcing and make the tool call NOW."
+        )
+    return text

@@ -38,10 +38,55 @@ def test_happy_path_with_finish_run(project, cfg):
 
 
 def test_forced_summary_when_model_forgets(project, cfg):
+    cfg.set("stall_nudges", 0)  # legacy path: prose is accepted as final immediately
     result = run_agent(project, cfg, [{"text": "all done, bye"}])
     assert not result.aborted
     assert result.summary == "[mock] run done."  # MockBackend obeys forced finish_run
     assert result.final_text == "all done, bye"
+
+
+def test_stall_nudge_gets_model_to_act(project, cfg):
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"text": "I should write out.txt with hello."},  # narrates, no tool call
+            {"tool": "write_file",
+             "args": {"path": "workspace/out.txt", "content": "hello"}},
+            {"tool": "finish_run", "args": {"summary": "Did: wrote out.txt"}},
+        ],
+    )
+    assert not result.aborted
+    assert result.summary == "Did: wrote out.txt"
+    assert (project.workspace_dir / "out.txt").read_text() == "hello"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "prose and no tool call" in transcript  # the nudge landed
+
+
+def test_stall_nudge_flags_repetition(project, cfg):
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"text": "I should write the file."},
+            {"text": "I should write   the file."},  # same thing, modulo whitespace
+            {"tool": "finish_run", "args": {"summary": "done"}},
+        ],
+    )
+    assert not result.aborted
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "same message twice" in transcript
+
+
+def test_stall_nudges_exhausted_accepts_prose(project, cfg):
+    result = run_agent(
+        project,
+        cfg,
+        [{"text": "thinking..."}, {"text": "still thinking..."}, {"text": "the answer"}],
+    )
+    assert not result.aborted
+    assert result.final_text == "the answer"  # third prose turn accepted as final
+    assert result.summary == "[mock] run done."  # forced finish_run backstop
 
 
 def test_turn_cap_stub_summary(project, cfg):

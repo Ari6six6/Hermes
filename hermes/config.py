@@ -23,6 +23,7 @@ DEFAULTS: dict = {
     "current_project": "",
     "sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
     "max_turns": 20,
+    "stall_nudges": 2,  # bounce prose-only turns back N times before accepting them as final
     "max_tool_result_chars": 8000,
     "package_budget_tokens": 10000,  # scaled down automatically on small contexts
     "history_max_prompts": 30,

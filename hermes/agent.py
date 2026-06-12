@@ -34,6 +34,10 @@ def strip_think(text: str | None) -> str:
     return THINK_RE.sub("", text).strip()
 
 
+def _normalize(text: str) -> str:
+    return " ".join(text.split()).lower()
+
+
 def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     """Execute one agent run. `env` carries gpu_status / remote_workspace /
     context_window for the package; `gpu` is an SSHEndpoint or None."""
@@ -67,8 +71,10 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     ctx.registry = registry
 
     max_turns = cfg.get("max_turns", 20)
+    nudges_left = cfg.get("stall_nudges", 2)
     consecutive_errors = 0
     final_text = ""
+    prev_shown = ""
     turns = 0
     aborted = False
     tool_names_used: list[str] = []
@@ -87,12 +93,27 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     ],
                 }
             )
+            repeated = bool(shown) and _normalize(shown) == _normalize(prev_shown)
             if shown:
                 print(shown)
                 final_text = shown
+                prev_shown = shown
 
             if not result.tool_calls:
-                break  # final answer
+                # Small models love to narrate the plan (or paste code) and
+                # stop instead of acting. Bounce them back a couple of times
+                # before accepting prose as the final answer.
+                if nudges_left <= 0:
+                    break  # final answer
+                nudges_left -= 1
+                nudge = package.stall_nudge(repeated)
+                messages.append({"role": "assistant", "content": result.content or ""})
+                messages.append({"role": "user", "content": nudge})
+                log({"role": "user", "content": nudge})
+                print(yellow("  (model repeated itself without acting — nudging)")
+                      if repeated else
+                      dim("  (no tool call — nudging the model to act or finish_run)"))
+                continue
 
             messages.append(_assistant_msg(result))
             for tc in result.tool_calls:
