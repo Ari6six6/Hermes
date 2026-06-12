@@ -99,8 +99,12 @@ automatically on small tiers.
 | `forge_tool` | phone | you review the source before it loads |
 
 The toolbox ships ready-made tools (`download_file`, `transfer`,
-`replicate`, `todo`, `json_query`) whose schemas don't bloat the prompt
-until equipped. Forged tools are plain Python files in `<project>/tools/`,
+`replicate`, `todo`, `json_query`, `extract_code`, `base64_codec`) whose
+schemas don't bloat the prompt until equipped. `extract_code` pulls just the
+code out of a page the agent found online — the `<script>`/`<pre>`/`<code>`
+blocks and markdown fences that `http_request`'s readable-text mode drops or
+flattens — and `base64_codec` encodes/decodes base64 (binary-safe, tolerant
+of url-safe alphabets and missing padding). Forged tools are plain Python files in `<project>/tools/`,
 loaded only after you approve the exact source (re-approval on any change).
 Host tools only appear once you've registered a server.
 
