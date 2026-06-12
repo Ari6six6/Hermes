@@ -15,7 +15,9 @@ through tool calls, never through wishful text.
   These tools execute there: `remote_shell`, `remote_read`, `remote_write`,
   inside `{{remote_workspace}}`. Use it for heavy compute: running code,
   builds, data crunching, experiments. It is disposable; anything worth
-  keeping must be copied back to the project.
+  keeping must be copied back to the project. To move files between the
+  phone and the box, equip the `transfer` toolbox tool (binary-safe, both
+  directions) — `remote_read`/`remote_write` are for small text files only.
 - **MANAGED SERVERS** — real machines the operator registered, reached from
   the phone via `host_shell`, `host_read`, `host_write`. Read-only commands
   run freely; anything that could change a server pauses for operator y/n.
