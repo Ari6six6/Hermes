@@ -1,10 +1,9 @@
 """Toolbox: move files between the phone project and the GPU box (binary-safe).
 
 This is THE bridge for the no-internet-on-GPU rule: download on the phone,
-push to the box; compute on the box, pull results back.
+push to the box; compute on the box, pull results back. Bytes are streamed
+over the SSH connection — no base64 inflation, nothing buffered in phone RAM.
 """
-
-import base64
 
 TOOL = {
     "name": "transfer",
@@ -26,32 +25,29 @@ TOOL = {
 
 def run(args, ctx):
     from hermes.paths import PathDenied, resolve_in
+    from hermes.ssh import shell_path
 
     if ctx.gpu is None:
-        return "ERROR: no GPU box attached."
+        return "ERROR: no GPU box attached. Tell the operator to run `gpu attach`."
     try:
         local = resolve_in(ctx.project.root, args["local_path"])
     except PathDenied:
         return "DENIED: local_path must stay inside the project."
-    remote = args["remote_path"]
+    remote_q = shell_path(args["remote_path"])
 
     if args["direction"] == "push":
         if not local.is_file():
             return f"ERROR: no such local file: {args['local_path']}"
-        data = base64.b64encode(local.read_bytes()).decode()
-        rc, _, err = ctx.gpu.run(
-            f"mkdir -p $(dirname {remote}) && base64 -d > {remote}",
-            stdin=data,
-            timeout=600,
+        rc, err = ctx.gpu.run_in_from_file(
+            f'mkdir -p "$(dirname {remote_q})" && cat > {remote_q}', local
         )
         if rc != 0:
             return f"ERROR: push failed: {err.strip()[-400:]}"
-        return f"pushed {local.stat().st_size} bytes to {remote}"
+        return f"pushed {local.stat().st_size} bytes to {args['remote_path']}"
 
-    rc, out, err = ctx.gpu.run(f"base64 {remote}", timeout=600)
-    if rc != 0:
-        return f"ERROR: pull failed: {err.strip()[-400:]}"
     local.parent.mkdir(parents=True, exist_ok=True)
-    raw = base64.b64decode(out.encode())
-    local.write_bytes(raw)
-    return f"pulled {len(raw)} bytes to {args['local_path']}"
+    rc, err = ctx.gpu.run_out_to_file(f"cat {remote_q}", local)
+    if rc != 0:
+        local.unlink(missing_ok=True)
+        return f"ERROR: pull failed: {err.strip()[-400:]}"
+    return f"pulled {local.stat().st_size} bytes to {args['local_path']}"

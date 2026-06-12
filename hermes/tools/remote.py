@@ -27,8 +27,10 @@ NETWORK_RE = re.compile(
 
 NETWORK_DENIED = (
     "DENIED: internet access from the GPU box is not allowed. All network "
-    "operations must go through the phone — use http_request / web_search, or "
-    "download on the phone and push the file with remote_write."
+    "operations must go through the phone — use http_request / web_search. To "
+    "get a file onto the box: download it on the phone (download_file "
+    "toolbox), then push it with the `transfer` toolbox tool (equip both via "
+    "equip_tool). remote_write works for small text files only."
 )
 
 
@@ -75,7 +77,8 @@ def remote_shell(args, ctx):
 
 @tool(
     "remote_read",
-    "Read a text file from the GPU box.",
+    "Read a text file from the GPU box. Text only — to move binary files or "
+    "anything large, equip the `transfer` toolbox tool.",
     obj_schema({"path": {"type": "string"}}, ["path"]),
 )
 def remote_read(args, ctx):
@@ -90,7 +93,8 @@ def remote_read(args, ctx):
 
 @tool(
     "remote_write",
-    "Write a text file on the GPU box.",
+    "Write a text file on the GPU box. Text only — to move binary files or "
+    "anything large, equip the `transfer` toolbox tool.",
     obj_schema(
         {"path": {"type": "string"}, "content": {"type": "string"}},
         ["path", "content"],

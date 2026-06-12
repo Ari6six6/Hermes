@@ -82,6 +82,7 @@ class SSHEndpoint:
                 self.base_args() + [command],
                 capture_output=True,
                 text=True,
+                errors="replace",  # binary in stdout must not raise mid-run
                 timeout=timeout,
                 input=stdin,
             )
