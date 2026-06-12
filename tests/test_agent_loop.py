@@ -89,13 +89,51 @@ def test_stall_nudges_exhausted_accepts_prose(project, cfg):
     assert result.summary == "[mock] run done."  # forced finish_run backstop
 
 
-def test_turn_cap_stub_summary(project, cfg):
+def test_turn_cap_forces_handoff_summary(project, cfg):
     cfg.set("max_turns", 2)
     script = [{"tool": "write_note", "args": {"text": f"n{i}"}} for i in range(5)]
     result = run_agent(project, cfg, script)
     assert result.aborted
     assert result.turns == 2
-    assert "[auto-stub" in result.summary
+    # cap aborts still get a real model-written summary, not the stub
+    assert result.summary == "[mock] run done."
+
+
+def test_stub_summary_when_backend_dies(project, cfg):
+    class DeadBackend:
+        def chat(self, *a, **k):
+            from hermes.llm import LLMTransportError
+            raise LLMTransportError("vLLM unreachable")
+
+    result = agent.run(project, "do the thing", cfg, DeadBackend(),
+                       gpu=None, env={}, confirm_fn=lambda *a, **k: True)
+    assert result.aborted
+    assert "[auto-stub" in result.summary  # no extra LLM call when transport is down
+
+
+def test_wrapup_warning_near_turn_cap(project, cfg):
+    cfg.set("max_turns", 4)
+    script = [{"tool": "write_note", "args": {"text": f"n{i}"}} for i in range(5)]
+    result = run_agent(project, cfg, script)
+    assert result.aborted
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "Only 2 turns remain" in transcript
+
+
+def test_final_reply_persisted_verbatim(project, cfg):
+    from hermes import package
+    result = run_agent(
+        project,
+        cfg,
+        [{"tool": "finish_run", "args": {"summary": "done"},
+          "say": "Two options: (a) rsync nightly, (b) btrfs snapshots. I lean (b)."}],
+    )
+    assert result.final_text.startswith("Two options")
+    assert (project.runs_dir / "0001" / "final.md").read_text().startswith("Two options")
+    # the next run's package carries it verbatim
+    user = package.assemble(project, "do option b", {}, cfg)[1]["content"]
+    assert "# YOUR LAST REPLY (run 0001" in user
+    assert "btrfs snapshots. I lean (b)." in user
 
 
 def test_circuit_breaker_on_consecutive_errors(project, cfg):

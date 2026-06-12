@@ -20,7 +20,8 @@ PROMPTS_DIR = Path(__file__).parent / "prompts"
 SECTION_SHARES = {
     "mission": 0.20,
     "history": 0.15,
-    "summaries": 0.40,
+    "summaries": 0.30,
+    "last_reply": 0.10,
     "notes": 0.15,
     "workspace": 0.10,
 }
@@ -93,6 +94,16 @@ def assemble(project: Project, prompt: str, env: dict, cfg: Config) -> list[dict
     ]
     summaries = truncate_keep_tail("\n\n".join(summary_blocks), budget["summaries"])
 
+    last = project.last_final_reply()
+    if last:
+        last_run, last_text = last
+        last_reply_block = (
+            f"# YOUR LAST REPLY (run {last_run:04d}, verbatim — the operator may "
+            "refer to it)\n" + truncate_keep_tail(last_text, budget["last_reply"])
+        )
+    else:
+        last_reply_block = "# YOUR LAST REPLY\n(none yet)"
+
     notes = truncate_keep_tail(project.read_notes().strip(), budget["notes"])
     workspace = truncate_keep_head(project.workspace_listing(), budget["workspace"])
 
@@ -101,6 +112,7 @@ def assemble(project: Project, prompt: str, env: dict, cfg: Config) -> list[dict
             "# MISSION\n" + (mission or "(empty)"),
             "# PROMPT HISTORY (operator, oldest first)\n" + (history or "(none yet)"),
             "# RUN SUMMARIES (your own past runs)\n" + (summaries or "(none yet)"),
+            last_reply_block,
             "# NOTES (your own)\n" + (notes or "(none)"),
             "# WORKSPACE\n" + workspace,
             "# CURRENT REQUEST\n" + prompt.strip(),
@@ -115,6 +127,10 @@ def assemble(project: Project, prompt: str, env: dict, cfg: Config) -> list[dict
 
 def summary_nudge() -> str:
     return (PROMPTS_DIR / "summary.md").read_text().strip()
+
+
+def wrapup_warning() -> str:
+    return (PROMPTS_DIR / "wrapup.md").read_text().strip()
 
 
 def stall_nudge(repeated: bool = False) -> str:

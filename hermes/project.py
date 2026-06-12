@@ -139,6 +139,24 @@ class Project:
         run_dir.mkdir(parents=True)
         return run_id, run_dir
 
+    def last_final_reply(self) -> tuple[int, str] | None:
+        """The agent's most recent final answer, verbatim — so the next run
+        understands references to 'what you just said'."""
+        if not self.runs_dir.exists():
+            return None
+        dirs = sorted(
+            (d for d in self.runs_dir.iterdir() if d.is_dir() and d.name.isdigit()),
+            key=lambda d: int(d.name),
+            reverse=True,
+        )
+        for d in dirs:
+            final = d / "final.md"
+            if final.exists():
+                text = final.read_text().strip()
+                if text:
+                    return int(d.name), text
+        return None
+
     def recent_summaries(self, k: int) -> list[tuple[int, str]]:
         if not self.runs_dir.exists():
             return []

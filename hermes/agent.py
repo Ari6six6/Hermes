@@ -77,6 +77,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     prev_shown = ""
     turns = 0
     aborted = False
+    backend_dead = False
     tool_names_used: list[str] = []
 
     try:
@@ -136,23 +137,34 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                 print(yellow("  (circuit breaker: too many consecutive tool errors)"))
                 aborted = True
                 break
+            if turns == max_turns - 2:
+                warn = package.wrapup_warning()
+                messages.append({"role": "user", "content": warn})
+                log({"role": "user", "content": warn})
+                print(yellow("  (2 turns left — telling the model to wrap up)"))
         else:
             print(yellow(f"  (turn cap {max_turns} reached)"))
             aborted = True
     except LLMTransportError as e:
         print(red(f"\n{e}"))
         aborted = True
+        backend_dead = True
     except KeyboardInterrupt:
         print(yellow("\n(run interrupted)"))
         aborted = True
+        backend_dead = True  # the operator wants out — no extra LLM round-trips
 
     summary = ctx.finish_summary
-    if summary is None and not aborted:
+    if summary is None and not backend_dead:
+        # Even on a cap/breaker abort the model can still write a real
+        # handoff summary — far more useful to the next run than a stub.
         summary = _force_summary(backend, messages, registry, ctx, log)
     if summary is None:
         summary = _stub_summary(prompt, tool_names_used, final_text, aborted)
 
     (run_dir / "summary.md").write_text(summary + "\n")
+    if final_text:
+        (run_dir / "final.md").write_text(final_text + "\n")
     status = red("aborted") if aborted else green("complete")
     print(f"\n{dim(f'[run {run_id:04d}')} {status} {dim(f'— {turns} turn(s)]')}")
     return RunResult(run_id, summary, final_text, turns, aborted)

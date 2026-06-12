@@ -15,6 +15,7 @@ def test_sections_and_order(project, cfg):
         user.index("# MISSION"),
         user.index("# PROMPT HISTORY"),
         user.index("# RUN SUMMARIES"),
+        user.index("# YOUR LAST REPLY"),
         user.index("# NOTES"),
         user.index("# WORKSPACE"),
         user.index("# CURRENT REQUEST"),
