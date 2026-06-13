@@ -1,9 +1,11 @@
 """Tools that execute on the rented GPU box over SSH.
 
 The GPU box is the agent's compute sandbox — shell and file ops there run
-without confirmation (commands are echoed to the screen). Hard rule: NO
-internet from the GPU box; obvious network commands are blocked and the
-agent is redirected to the phone-side web tools.
+without confirmation (commands are echoed to the screen). Internet from the
+box is a deny-list speed bump, not a cage: a root agent can route around it,
+so the deny-list is paired with an honest ask in the prompt rather than a
+false claim of impossibility. Obvious network commands are redirected to the
+phone-side web tools.
 """
 
 from __future__ import annotations
@@ -26,11 +28,14 @@ NETWORK_RE = re.compile(
 )
 
 NETWORK_DENIED = (
-    "DENIED: internet access from the GPU box is not allowed. All network "
-    "operations must go through the phone — use http_request / web_search. To "
-    "get a file onto the box: download it on the phone (download_file "
-    "toolbox), then push it with the `transfer` toolbox tool (equip both via "
-    "equip_tool). remote_write works for small text files only."
+    "Not blocking you — asking you: please keep this off the GPU box and run "
+    "it from the phone instead. The box can technically reach the network, but "
+    "we want every byte of egress to go through the phone where the operator "
+    "can see it (it's rented from a stranger). Use http_request / web_search "
+    "for the network part. To get a file onto the box: download it on the "
+    "phone (download_file toolbox), then push it with the `transfer` toolbox "
+    "tool (equip both via equip_tool). remote_write works for small text "
+    "files only."
 )
 
 
@@ -44,7 +49,8 @@ def _need_gpu(ctx):
     "remote_shell",
     "Run a shell command on the GPU box (Linux, root) — your compute sandbox "
     "for running code, builds, and heavy work. Default cwd is the remote "
-    "workspace. NO internet from there: network commands are blocked.",
+    "workspace. Keep internet off the box: run network steps from the phone "
+    "instead (the operator wants all egress visible there).",
     obj_schema(
         {
             "command": {"type": "string"},

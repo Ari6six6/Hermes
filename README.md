@@ -8,8 +8,10 @@ vLLM, and gives you an agent that lives across two machines:
 - **your phone** (Termux) — where the operator is, where every project lives,
   and the **only place with internet access**;
 - **the GPU box** — the model's home and the agent's disposable compute
-  sandbox. Network access from there is blocked by design — at the kernel
-  level (`unshare -n`) when the box allows it, by deny-list otherwise;
+  sandbox. Internet from there is discouraged by design — a deny-list (plus a
+  kernel-level `unshare -n` speed bump when the box allows it) and, above all,
+  an honest ask: the box *can* reach the network, we ask the agent not to, so
+  all egress stays visible on the phone;
 - **your servers** (optional) — real machines you register with `host add`.
   The agent reaches them from the phone: reads run free, anything mutating
   asks you first.
@@ -104,14 +106,21 @@ until equipped. Forged tools are plain Python files in `<project>/tools/`,
 loaded only after you approve the exact source (re-approval on any change).
 Host tools only appear once you've registered a server.
 
-**The hard rule:** anything internet happens on the phone. The GPU box gets
-files pushed to it (`transfer`, `replicate`), never a network connection out.
+**The rule:** anything internet happens on the phone. The GPU box gets files
+pushed to it (`transfer`, `replicate`), not a network connection out. This is
+enforced by trust, not a cage — the box has to reach the internet to install
+vLLM and pull the weights, so egress always exists; a root agent can route
+around any in-box block. So instead of lying to the model that it's
+impossible, the prompt is honest: *you can, we're asking you not to, here's
+why.* The deny-list (and `unshare -n` where available) is a speed bump that
+stops accidents, not a wall.
 
 **Two safety polarities, on purpose.** The GPU box is disposable, so its
-gate is a deny-list: everything runs free except known network commands
-(and, where the container allows `unshare`, commands physically lose the
-network). Your servers are real, so their gate fails closed: only commands
-positively classified as read-only (`cat`, `journalctl`, `systemctl status`,
+gate is a deny-list speed bump: everything runs free except known network
+commands (and, where the container allows `unshare`, those commands also lose
+the network at the kernel — still escapable by root, just harder). Your
+servers are real, so their gate fails closed: only commands positively
+classified as read-only (`cat`, `journalctl`, `systemctl status`,
 `docker logs`, ...) run free — everything else, and every file write, shows
 you the exact command and waits for y/n.
 

@@ -60,7 +60,7 @@ def test_system_prompt_renders(project, cfg):
     assert "{{" not in system  # all template vars replaced
     assert "testproj" in system
     assert "131072" in system
-    assert "internet access goes through the phone" in system.lower()
+    assert "keep all internet on the phone" in system.lower()
     assert "Managed hosts: none" in system  # default when none registered
 
 
