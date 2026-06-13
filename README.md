@@ -35,6 +35,23 @@ the prompt can never creep. Within a run the agent loops freely over native
 tool calls (vLLM's `--tool-call-parser hermes` — the format the model was
 trained on) until it answers and files its `finish_run` summary.
 
+## The doer doesn't grade its own homework
+
+A sandbox is only worth having if the model is forced to *listen* to it. Left
+alone, a small model will write code, write a test that can't fail, run that
+test in the real sandbox, and declare victory — verification theater. So when a
+run that wrote code (`write_file` / `edit_file` / `remote_write`) tries to
+finish and a GPU box is attached, Hermes spins a separate **verification pass**:
+fresh context, a skeptical prompt, the *same real sandbox*. It re-runs the
+actual code itself and returns `VERDICT: PASS` or `FAIL`. A FAIL — ground truth
+from the box, not the doer's opinion — bounces the run back with the real error
+to fix; only a PASS lets it finish. It fails closed (no clear PASS = FAIL) and
+is bounded (`verify_rounds`, default 2). Turn it off with
+`config set verify_code_runs false`. Two earlier guards back it up: a finish
+that pasted code but wrote/ran nothing gets bounced (`phantom_nudges`), and
+every tool's real output (exit codes included) is echoed to your phone so a
+fabricated "it passed" can't hide next to what the command actually printed.
+
 ## Install (Termux)
 
 ```sh

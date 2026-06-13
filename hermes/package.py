@@ -140,6 +140,34 @@ def phantom_nudge() -> str:
     return (PROMPTS_DIR / "phantom.md").read_text().strip()
 
 
+def verifier_prompt() -> str:
+    return (PROMPTS_DIR / "verifier.md").read_text().strip()
+
+
+def verifier_request(request: str, files: list[str]) -> str:
+    file_list = "\n".join(f"- {f}" for f in files) if files else "(none reported)"
+    return (
+        "The agent was asked:\n\n"
+        f"{request.strip()}\n\n"
+        "It claims to have finished, writing/changing these files:\n"
+        f"{file_list}\n\n"
+        "Verify it independently in the sandbox now, then give your VERDICT."
+    )
+
+
+def verify_failed(report: str) -> str:
+    return (
+        "An INDEPENDENT verification pass ran your code in the real sandbox and "
+        "it did NOT pass:\n\n"
+        f"{report.strip()}\n\n"
+        "That is ground truth from the sandbox, not an opinion, and it overrides "
+        "your own conclusion. Do not finish again until you have fixed the real "
+        "problem: read the failure, change the code (`edit_file` / `write_file`), "
+        "run the actual program yourself and read its real output, and only then "
+        "`finish_run`."
+    )
+
+
 def stall_nudge(repeated: bool = False) -> str:
     text = (PROMPTS_DIR / "stall.md").read_text().strip()
     if repeated:

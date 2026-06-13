@@ -24,6 +24,10 @@ DEFAULTS: dict = {
     "sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
     "max_turns": 40,
     "stall_nudges": 2,  # bounce prose-only turns back N times before accepting them as final
+    "phantom_nudges": 1,  # bounce a finish that pasted code but wrote/ran nothing
+    "verify_code_runs": True,  # after a code task, an independent pass re-runs it in the sandbox
+    "verify_rounds": 2,  # how many times that pass may bounce a failed run back
+    "verify_max_turns": 6,  # tool-call budget inside one verification pass
     "max_tool_result_chars": 8000,
     "package_budget_tokens": 10000,  # scaled down automatically on small contexts
     "history_max_prompts": 30,

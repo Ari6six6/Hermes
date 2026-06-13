@@ -4,14 +4,14 @@ from hermes import agent
 from hermes.llm import MockBackend
 
 
-def run_agent(project, cfg, script, confirm=None):
+def run_agent(project, cfg, script, confirm=None, gpu=None):
     backend = MockBackend(script)
     return agent.run(
         project,
         "do the thing",
         cfg,
         backend,
-        gpu=None,
+        gpu=gpu,
         env={},
         confirm_fn=confirm or (lambda *a, **k: True),
     )
@@ -265,6 +265,126 @@ def test_echo_result_truncates_long_output(capsys):
 def test_echo_result_skips_empty(capsys):
     agent._echo_result("   ")
     assert capsys.readouterr().out == ""
+
+
+SANDBOX = object()  # a non-None stand-in for an attached GPU box
+
+
+def test_verification_runs_only_with_a_sandbox(project, cfg):
+    # No GPU attached -> no verifier pass, the doer's finish stands as before.
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/m.py", "content": "x=1"}},
+            {"tool": "finish_run", "args": {"summary": "done"}},
+        ],
+        gpu=None,
+    )
+    assert not result.aborted
+    assert result.summary == "done"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "verifier" not in transcript
+
+
+def test_verification_passes_lets_run_finish(project, cfg):
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/m.py", "content": "print(2+2)"}},
+            {"tool": "finish_run", "args": {"summary": "done"}},
+            # verifier pass (same backend, next script items):
+            {"text": "Ran python m.py, output 4. VERDICT: PASS"},
+        ],
+        gpu=SANDBOX,
+    )
+    assert not result.aborted
+    assert result.summary == "done"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert '"role": "verifier"' in transcript
+
+
+def test_verification_fail_bounces_then_doer_fixes(project, cfg):
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/m.py", "content": "import nope"}},
+            {"tool": "finish_run", "args": {"summary": "done"}},
+            {"text": "Ran it, ModuleNotFoundError: nope. VERDICT: FAIL"},  # round 1
+            # bounced back to the doer:
+            {"tool": "edit_file",
+             "args": {"path": "workspace/m.py", "old": "import nope", "new": "x=1"}},
+            {"tool": "finish_run", "args": {"summary": "fixed it"}},
+            {"text": "Ran it, no error. VERDICT: PASS"},  # round 2
+        ],
+        gpu=SANDBOX,
+    )
+    assert not result.aborted
+    assert result.summary == "fixed it"
+    assert (project.workspace_dir / "m.py").read_text() == "x=1"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "did NOT pass" in transcript  # the failure was fed back
+
+
+def test_verification_budget_stops_relooping(project, cfg):
+    cfg.set("verify_rounds", 1)
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/m.py", "content": "import nope"}},
+            {"tool": "finish_run", "args": {"summary": "done"}},
+            {"text": "VERDICT: FAIL still broken"},  # round 1, budget now 0
+            # doer re-finishes; no budget left -> accepted without another pass
+            {"tool": "finish_run", "args": {"summary": "second attempt"}},
+        ],
+        gpu=SANDBOX,
+    )
+    assert not result.aborted
+    assert result.summary == "second attempt"
+
+
+def test_verifier_can_use_tools_before_verdict(project, cfg):
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/m.py", "content": "print('hi')"}},
+            {"tool": "finish_run", "args": {"summary": "done"}},
+            # verifier reads the file, then rules:
+            {"tool": "read_file", "args": {"path": "workspace/m.py"}},
+            {"text": "Saw print('hi'); ran it. VERDICT: PASS"},
+        ],
+        gpu=SANDBOX,
+    )
+    assert not result.aborted
+    assert result.summary == "done"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "verifier-tool" in transcript
+
+
+def test_no_verification_for_non_code_runs(project, cfg):
+    # A run that wrote no code files (just a note) isn't verified.
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_note", "args": {"text": "nginx looked fine"}},
+            {"tool": "finish_run", "args": {"summary": "checked, all good"}},
+        ],
+        gpu=SANDBOX,
+    )
+    assert not result.aborted
+    assert result.summary == "checked, all good"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "verifier" not in transcript
 
 
 def test_think_blocks_stripped():

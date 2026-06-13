@@ -13,10 +13,15 @@ from hermes import package
 from hermes.llm import ChatResult, LLMTransportError
 from hermes.tools import build_registry
 from hermes.tools.base import ToolContext
-from hermes.ui import cyan, dim, green, red, yellow
+from hermes.ui import cyan, dim, green, magenta, red, yellow
 
 THINK_RE = re.compile(r"<(?:seed:)?think>.*?</(?:seed:)?think>\s*", re.S)
+VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|FAIL)", re.I)
 MAX_CONSECUTIVE_ERRORS = 3
+
+# Tools that put code on disk — the trigger for an independent verification
+# pass. (Running-only tasks like "check the logs" don't need code-verifying.)
+CODE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "remote_write"})
 
 # A fenced, multi-line code block in the final answer: ```lang\n...\n```
 CODE_FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.S)
@@ -95,6 +100,13 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     max_turns = cfg.get("max_turns", 20)
     nudges_left = cfg.get("stall_nudges", 2)
     phantom_nudges_left = cfg.get("phantom_nudges", 1)
+    # Independent verification only runs when there's a real sandbox to run the
+    # code in (a GPU box) and the operator hasn't switched it off.
+    verify_rounds_left = (
+        cfg.get("verify_rounds", 2)
+        if cfg.get("verify_code_runs", True) and gpu is not None
+        else 0
+    )
     consecutive_errors = 0
     final_text = ""
     prev_shown = ""
@@ -102,6 +114,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     aborted = False
     backend_dead = False
     tool_names_used: list[str] = []
+    files_touched: list[str] = []
 
     try:
         for turns in range(1, max_turns + 1):
@@ -155,6 +168,10 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     consecutive_errors += 1
                 else:
                     consecutive_errors = 0
+                    if tc.name in CODE_WRITE_TOOLS:
+                        path = _arg(tc.arguments, "path")
+                        if path and path not in files_touched:
+                            files_touched.append(path)
 
             if ctx.finish_summary is not None:
                 if phantom_nudges_left > 0 and _is_phantom_finish(
@@ -170,6 +187,28 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     print(yellow("  (code in the answer but nothing written or "
                                  "run — bouncing back to actually do it)"))
                     continue
+                if verify_rounds_left > 0 and (
+                    set(tool_names_used) & CODE_WRITE_TOOLS
+                ):
+                    # The doer doesn't get to grade its own homework. A fresh,
+                    # skeptical pass re-runs the code in the real sandbox and
+                    # returns a verdict the doer can't fake.
+                    verify_rounds_left -= 1
+                    print(magenta("  (independent verification — re-running the "
+                                  "code in the sandbox)"))
+                    passed, report = _verify(
+                        backend, registry, ctx, prompt, files_touched, log,
+                        cfg.get("verify_max_turns", 6),
+                    )
+                    if not passed:
+                        ctx.finish_summary = None
+                        nudge = package.verify_failed(report)
+                        messages.append({"role": "user", "content": nudge})
+                        log({"role": "user", "content": nudge})
+                        print(red("  (verification FAILED — sending it back to "
+                                  "fix the real problem)"))
+                        continue
+                    print(green("  (verification PASSED — the code actually runs)"))
                 break
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 print(yellow("  (circuit breaker: too many consecutive tool errors)"))
@@ -249,6 +288,57 @@ def _stub_summary(prompt, tools_used, final_text, aborted) -> str:
         f"Tools used: {', '.join(tools_used) if tools_used else 'none'}\n"
         f"Last output: {final_text[:400] if final_text else '(none)'}"
     )
+
+
+def _arg(arguments: str, key: str):
+    try:
+        value = json.loads(arguments or "{}").get(key)
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _verify(backend, registry, ctx, request, files, log, max_turns) -> tuple[bool, str]:
+    """An independent pass: fresh context, skeptical prompt, the same real
+    sandbox. It re-runs the code itself and returns (passed, report). Fails
+    closed — no clear PASS verdict means FAIL."""
+    msgs = [
+        {"role": "system", "content": package.verifier_prompt()},
+        {"role": "user", "content": package.verifier_request(request, files)},
+    ]
+    report = ""
+    for _ in range(max(1, max_turns)):
+        try:
+            result = backend.chat(msgs, tools=registry.schemas())
+        except LLMTransportError:
+            return False, "(verifier could not reach the backend)"
+        shown = strip_think(result.content)
+        log({
+            "role": "verifier",
+            "content": result.content,
+            "tool_calls": [{"name": tc.name, "arguments": tc.arguments}
+                           for tc in result.tool_calls],
+        })
+        if shown:
+            report = shown
+            print(magenta("  [verify] ") + dim(_brief(shown.splitlines()[0], 120)))
+        verdicts = VERDICT_RE.findall(shown) if shown else []
+        if verdicts:
+            return verdicts[-1].upper() == "PASS", report
+        if not result.tool_calls:
+            break  # ended without a verdict and without acting — inconclusive
+        msgs.append(_assistant_msg(result))
+        for tc in result.tool_calls:
+            if tc.name == "finish_run":
+                out = ("Not your tool — you are the verifier. Run the code and "
+                       "end with a line 'VERDICT: PASS' or 'VERDICT: FAIL'.")
+            else:
+                out = registry.dispatch(tc.name, tc.arguments, ctx)
+                print(dim("    [verify] → ") + cyan(tc.name))
+                _echo_result(out)
+            log({"role": "verifier-tool", "name": tc.name, "content": out})
+            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
+    return False, report or "(verifier produced no verdict)"
 
 
 def _brief(arguments: str, cap: int = 100) -> str:
