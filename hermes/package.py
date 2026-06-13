@@ -136,6 +136,10 @@ def wrapup_warning() -> str:
     return (PROMPTS_DIR / "wrapup.md").read_text().strip()
 
 
+def phantom_nudge() -> str:
+    return (PROMPTS_DIR / "phantom.md").read_text().strip()
+
+
 def stall_nudge(repeated: bool = False) -> str:
     text = (PROMPTS_DIR / "stall.md").read_text().strip()
     if repeated:

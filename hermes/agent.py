@@ -18,6 +18,28 @@ from hermes.ui import cyan, dim, green, red, yellow
 THINK_RE = re.compile(r"<(?:seed:)?think>.*?</(?:seed:)?think>\s*", re.S)
 MAX_CONSECUTIVE_ERRORS = 3
 
+# A fenced, multi-line code block in the final answer: ```lang\n...\n```
+CODE_FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.S)
+
+# Tools that actually create a file or execute something — i.e. that leave a
+# real artifact behind. If a run produces a code block in its answer but never
+# calls one of these, the "work" happened only in prose.
+PRODUCTIVE_TOOLS = frozenset({
+    "write_file", "edit_file",
+    "remote_write", "remote_shell",
+    "host_write", "host_shell",
+    "local_shell", "forge_tool",
+    "transfer", "replicate", "download_file",
+})
+
+
+def _is_phantom_finish(tool_names_used, final_text) -> bool:
+    """True when the model is finishing with code in its answer but never
+    wrote a file or ran anything — code that lives only in the chat reply."""
+    if set(tool_names_used) & PRODUCTIVE_TOOLS:
+        return False
+    return bool(CODE_FENCE_RE.search(final_text or ""))
+
 
 @dataclass
 class RunResult:
@@ -72,6 +94,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
 
     max_turns = cfg.get("max_turns", 20)
     nudges_left = cfg.get("stall_nudges", 2)
+    phantom_nudges_left = cfg.get("phantom_nudges", 1)
     consecutive_errors = 0
     final_text = ""
     prev_shown = ""
@@ -132,6 +155,19 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     consecutive_errors = 0
 
             if ctx.finish_summary is not None:
+                if phantom_nudges_left > 0 and _is_phantom_finish(
+                    tool_names_used, final_text
+                ):
+                    # Pasted code, wrote nothing, ran nothing — the work lives
+                    # only in the reply. Reopen the run and make it real.
+                    phantom_nudges_left -= 1
+                    ctx.finish_summary = None
+                    nudge = package.phantom_nudge()
+                    messages.append({"role": "user", "content": nudge})
+                    log({"role": "user", "content": nudge})
+                    print(yellow("  (code in the answer but nothing written or "
+                                 "run — bouncing back to actually do it)"))
+                    continue
                 break
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 print(yellow("  (circuit breaker: too many consecutive tool errors)"))

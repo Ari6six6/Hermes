@@ -89,6 +89,75 @@ def test_stall_nudges_exhausted_accepts_prose(project, cfg):
     assert result.summary == "[mock] run done."  # forced finish_run backstop
 
 
+CODE_REPLY = "Here's the scraper:\n\n```python\nimport requests\nprint('hi')\n```"
+
+
+def test_phantom_finish_bounced_then_does_real_work(project, cfg):
+    # Model pastes code and tries to finish without ever writing a file.
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "finish_run", "args": {"summary": "wrote scraper.py"},
+             "say": CODE_REPLY},
+            # bounced -> now it actually writes the file and finishes for real
+            {"tool": "write_file",
+             "args": {"path": "workspace/scraper.py", "content": "print('hi')"}},
+            {"tool": "finish_run", "args": {"summary": "Did: wrote scraper.py"}},
+        ],
+    )
+    assert not result.aborted
+    assert result.summary == "Did: wrote scraper.py"
+    assert (project.workspace_dir / "scraper.py").read_text() == "print('hi')"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "Nobody runs the code in a chat reply" in transcript  # the nudge landed
+
+
+def test_phantom_finish_allowed_when_file_was_written(project, cfg):
+    # Code in the answer is fine when a file was actually written this run.
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/scraper.py", "content": "print('hi')"}},
+            {"tool": "finish_run", "args": {"summary": "done"}, "say": CODE_REPLY},
+        ],
+    )
+    assert not result.aborted
+    assert result.summary == "done"  # not bounced
+    assert result.turns == 2
+
+
+def test_phantom_finish_bounce_budget_does_not_loop(project, cfg):
+    # If the model insists on finishing with only code (e.g. an explain-only
+    # request), the single bounce is spent and prose is accepted — no loop.
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "finish_run", "args": {"summary": "example"}, "say": CODE_REPLY},
+            {"tool": "finish_run", "args": {"summary": "example, as asked"},
+             "say": CODE_REPLY},
+        ],
+    )
+    assert not result.aborted
+    assert result.summary == "example, as asked"
+    assert result.turns == 2
+
+
+def test_phantom_guard_ignores_prose_without_code(project, cfg):
+    # A normal prose answer with no code fence finishes immediately.
+    result = run_agent(
+        project,
+        cfg,
+        [{"tool": "finish_run", "args": {"summary": "done"},
+          "say": "I checked the logs; nginx is fine."}],
+    )
+    assert not result.aborted
+    assert result.turns == 1
+
+
 def test_turn_cap_forces_handoff_summary(project, cfg):
     cfg.set("max_turns", 2)
     script = [{"tool": "write_note", "args": {"text": f"n{i}"}} for i in range(5)]
