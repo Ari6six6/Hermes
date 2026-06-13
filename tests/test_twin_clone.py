@@ -91,6 +91,25 @@ def test_clone_honors_max(project, monkeypatch):
     assert report["recorded"] == 5
 
 
+def test_clone_fingerprints_stack(project, monkeypatch):
+    monkeypatch.setattr(clone_mod.time, "sleep", lambda *_: None)
+    twin = project.twin()
+    twin.init(source="https://blog.example.com")
+    wp_home = ('<meta name="generator" content="WordPress 6.4"/>'
+               '<link href="/wp-content/themes/t/style.css">')
+    fetch = FakeFetch(
+        {"/": (200, {"content-type": "text/html", "server": "Apache/2.4",
+                     "x-powered-by": "PHP/8.1"}, wp_home)},
+        default=(404, {"content-type": "text/html"}, "nope"))
+    report = clone(twin, "https://blog.example.com", fetch=fetch, delay=0,
+                   include_discovery=False)
+    assert report["stack"]["product"] == "WordPress"
+    assert report["stack"]["kind"] == "known_stack"
+    # persisted on the model, surfaced in the summary
+    assert twin.stack["product_version"] == "6.4"
+    assert "WordPress 6.4" in twin.summary()
+
+
 def test_expand_grows_sealed_model(project, monkeypatch):
     monkeypatch.setattr(clone_mod.time, "sleep", lambda *_: None)
     twin = project.twin()

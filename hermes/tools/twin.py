@@ -71,6 +71,29 @@ def twin_map(args, ctx):
 
 
 @tool(
+    "twin_stack",
+    "Show what recon fingerprinted about the target's stack — server, runtime, "
+    "framework/CMS and version, and whether it's a known open-source stack worth "
+    "reconstructing as real software or an opaque service to mirror by behavior.",
+    obj_schema({}, []),
+)
+def twin_stack(args, ctx):
+    twin = _twin(ctx)
+    if not twin.is_sealed():
+        return "ERROR: no sealed twin for this project."
+    stack = twin.stack
+    if not stack:
+        return "no stack fingerprint recorded."
+    from hermes.twin.recon import StackReport
+
+    report = StackReport(**stack)
+    lines = [report.summary(), ""]
+    if report.signals:
+        lines.append("signals: " + ", ".join(report.signals))
+    return "\n".join(lines)
+
+
+@tool(
     "twin_expand",
     "Grow the twin to cover requests it's missing. Give the paths you need; the "
     "benign clone layer fetches them read-only from the target (on the phone, "
@@ -97,4 +120,4 @@ def twin_expand(args, ctx):
             "exchange(s). Re-run twin_request for the paths you needed.")
 
 
-TOOLS = [twin_request, twin_map, twin_expand]
+TOOLS = [twin_request, twin_map, twin_stack, twin_expand]

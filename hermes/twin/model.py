@@ -166,6 +166,14 @@ class TwinModel:
         self.spec_path.write_text(json.dumps(spec, indent=2))
         self._patch_manifest(has_spec=True)
 
+    def store_stack(self, stack: dict) -> None:
+        """Record the recon fingerprint (which kind of twin to stand up)."""
+        self._patch_manifest(stack=stack)
+
+    @property
+    def stack(self) -> dict:
+        return self.read_manifest().get("stack", {})
+
     def add_exchange(self, ex: Exchange) -> None:
         """Append a real exchange. Refused once sealed — a sealed twin is frozen
         so the agent can trust it never shifts under it. (Use unseal() to grow.)"""
@@ -233,6 +241,12 @@ class TwinModel:
             f"target:  {m.get('source', '?')}  [{m.get('mode', 'url')}]",
             f"state:   {state}  ·  {m.get('exchange_count', len(self.exchanges()))} exchange(s)"
             f"{'  ·  API spec captured' if m.get('has_spec') else ''}",
+        ]
+        stack = m.get("stack") or {}
+        if stack:
+            from hermes.twin.recon import StackReport
+            lines.append("stack:   " + StackReport(**stack).summary())
+        lines += [
             f"mission: {m.get('mission') or '(none set)'}",
             f"win:     {m.get('win_condition') or '(none set)'}",
         ]

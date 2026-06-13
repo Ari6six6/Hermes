@@ -14,7 +14,9 @@ environment**. Build freely here.
   inventing an answer. A MISS is not a wall — call **`twin_expand`** with the
   paths you need and the benign clone layer (read-only, on the phone) learns them
   and folds them in. You never reach the live target yourself.
-- **`twin_map`** shows the surface the twin covers.
+- **`twin_map`** shows the surface the twin covers; **`twin_stack`** shows what
+  recon found — whether this is a known open-source stack (reconstruct the real
+  software) or an opaque service (mirror its behavior).
 
 **Your mission:** {{mission}}
 

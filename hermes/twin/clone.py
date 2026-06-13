@@ -31,6 +31,15 @@ UA = "Mozilla/5.0 (Linux; Android) HermesAgent/0.1 (benign clone)"
 _HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
 _URLISH_RE = re.compile(r'"(/[A-Za-z0-9_\-./]+)"')
 
+# Response headers worth keeping: enough to fingerprint the stack, not the noise.
+_KEEP_HEADERS = ("content-type", "content-length", "etag", "server",
+                 "x-powered-by", "x-aspnet-version", "x-generator", "set-cookie",
+                 "via")
+
+
+def _keep(resp_headers: dict) -> dict:
+    return {k: v for k, v in resp_headers.items() if k.lower() in _KEEP_HEADERS}
+
 
 def _httpx_fetch(method, url, headers=None, body=None, timeout=45):
     """Real network read, on the phone. Returns (status, headers, text)."""
@@ -137,8 +146,7 @@ def clone(model: TwinModel, base_url: str, *, seeds=None, fetch=_httpx_fetch,
         model.add_exchange(Exchange(
             method="GET", path=urlsplit(path).path or "/",
             query=urlsplit(path).query, status=status, content_type=ctype,
-            response_headers={k: v for k, v in resp_headers.items()
-                              if k.lower() in ("content-type", "content-length", "etag")},
+            response_headers=_keep(resp_headers),
             response_body=text,
             source="spec" if path in SPEC_PATHS else "crawl",
         ))
@@ -163,9 +171,17 @@ def clone(model: TwinModel, base_url: str, *, seeds=None, fetch=_httpx_fetch,
             for link in _links(base_url, status, ctype, text):
                 enqueue(link, depth + 1)
 
+    # Fingerprint the stack so the builder knows whether to mirror behavior or
+    # reconstruct the real software.
+    from hermes.twin.recon import fingerprint
+
+    stack = fingerprint(model.exchanges())
+    model.store_stack(stack.to_dict())
+    emit("stack", stack.summary())
+
     model.seal()
     report = {"recorded": recorded, "errors": errors,
-              "exchanges": len(model.exchanges())}
+              "exchanges": len(model.exchanges()), "stack": stack.to_dict()}
     emit("done", f"twin sealed: {report['exchanges']} exchange(s), {errors} error(s)")
     return report
 
