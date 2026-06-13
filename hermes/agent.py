@@ -146,6 +146,8 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                 tool_names_used.append(tc.name)
                 output = registry.dispatch(tc.name, tc.arguments, ctx)
                 log({"role": "tool", "name": tc.name, "content": output})
+                if tc.name != "finish_run":
+                    _echo_result(output)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": output}
                 )
@@ -252,3 +254,25 @@ def _stub_summary(prompt, tools_used, final_text, aborted) -> str:
 def _brief(arguments: str, cap: int = 100) -> str:
     text = " ".join(arguments.split())
     return text[:cap] + ("…" if len(text) > cap else "")
+
+
+def _echo_result(output: str, max_lines: int = 8, cap: int = 600) -> None:
+    """Show the operator the real tool result — exit codes, output, errors —
+    not just the model's later prose about it. Fabricated "it passed" claims
+    can't survive next to the actual output on the screen. Kept short for a
+    phone: a head of lines, capped, dim (red when the tool reported trouble)."""
+    text = (output or "").strip()
+    if not text:
+        return
+    all_lines = text.splitlines()
+    lines = all_lines[:max_lines]
+    shown = "\n".join(lines)
+    if len(shown) > cap:
+        shown = shown[:cap] + " …"
+        lines = shown.splitlines()
+    color = red if text.startswith(("ERROR", "DENIED")) else dim
+    for line in lines:
+        print(color("    " + line))
+    extra = len(all_lines) - len(lines)
+    if extra > 0:
+        print(dim(f"    … (+{extra} more line(s))"))

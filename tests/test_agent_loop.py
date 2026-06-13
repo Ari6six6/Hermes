@@ -237,6 +237,36 @@ def test_remote_tools_without_gpu(project, cfg):
     assert result.summary == "no gpu"
 
 
+def test_tool_output_echoed_to_operator(project, cfg, capsys):
+    # The operator must see the real tool result, not just the model's prose.
+    run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/a.txt", "content": "hi"}},
+            {"tool": "finish_run", "args": {"summary": "done"}},
+        ],
+    )
+    out = capsys.readouterr().out
+    assert "wrote 2 chars to workspace/a.txt" in out  # real result on screen
+    assert "summary recorded" not in out  # finish_run's result stays quiet
+
+
+def test_echo_result_truncates_long_output(capsys):
+    agent._echo_result("\n".join(f"line{i}" for i in range(50)))
+    out = capsys.readouterr().out
+    assert "line0" in out
+    assert "line7" in out
+    assert "line8" not in out  # capped at 8 lines
+    assert "more line(s)" in out
+
+
+def test_echo_result_skips_empty(capsys):
+    agent._echo_result("   ")
+    assert capsys.readouterr().out == ""
+
+
 def test_think_blocks_stripped():
     assert agent.strip_think("<think>secret</think>answer") == "answer"
     assert agent.strip_think("<seed:think>x</seed:think>ok") == "ok"
