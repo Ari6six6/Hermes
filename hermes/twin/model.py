@@ -187,6 +187,19 @@ class TwinModel:
         with self.exchanges_path.open("a") as f:
             f.write(json.dumps(ex.to_dict(), ensure_ascii=False) + "\n")
 
+    def upsert_exchange(self, ex: Exchange) -> None:
+        """Replace the stored exchange with the same request key (or add it).
+        Used when re-grounding corrects a sample that drifted from the target."""
+        if self.is_sealed():
+            raise ValueError("twin is sealed — open it with unseal() to correct it")
+        if not ex.captured_at:
+            ex.captured_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        kept = [e for e in self.exchanges() if e.key() != ex.key()]
+        kept.append(ex)
+        self.exchanges_path.write_text(
+            "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in kept) + "\n"
+        )
+
     def exchanges(self) -> list[Exchange]:
         if not self.exchanges_path.exists():
             return []

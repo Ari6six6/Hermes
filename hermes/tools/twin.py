@@ -120,4 +120,47 @@ def twin_expand(args, ctx):
             "exchange(s). Re-run twin_request for the paths you needed.")
 
 
-TOOLS = [twin_request, twin_map, twin_stack, twin_expand]
+@tool(
+    "twin_reground",
+    "Re-check one request against the real target and correct the twin if it has "
+    "drifted. Reach for this when a mismatch might be the twin's fault rather than "
+    "your solution's: it fetches the live response for that exact request, compares "
+    "it to the twin's stored sample, and updates the twin if they differ — so you "
+    "always build against the truth, and you learn whether a mismatch is on you or "
+    "on the twin.",
+    obj_schema(
+        {
+            "path": {"type": "string", "description": "request path, e.g. /users/1"},
+            "method": {"type": "string", "description": "GET (default) or HEAD"},
+            "query": {"type": "string", "description": "query string (optional)"},
+            "body": {"type": "string", "description": "request body (optional)"},
+        },
+        ["path"],
+    ),
+)
+def twin_reground(args, ctx):
+    from hermes.twin import clone as clone_mod
+
+    twin = _twin(ctx)
+    if not twin.is_sealed():
+        return "ERROR: no sealed twin for this project."
+    r = clone_mod.reground(
+        twin, twin.source, args["path"],
+        method=(args.get("method") or "GET"),
+        query=args.get("query", ""), body=args.get("body"),
+    )
+    status = r["status"]
+    if status == "accurate":
+        return ("the twin matches the live target for this request — the twin is "
+                "accurate here, so a mismatch is in your solution, not the twin.")
+    if status == "corrected":
+        return (f"the twin had drifted — corrected it to the live value.\n"
+                f"old: HTTP {r['old'][0]}  {r['old'][1][:300]}\n"
+                f"new: HTTP {r['new'][0]}  {r['new'][1][:300]}\n"
+                "re-check your solution against the new value.")
+    if status == "added":
+        return f"the twin had no sample for this — added the live one (HTTP {r['new'][0]})."
+    return f"ERROR: could not reach the target to re-ground: {r.get('detail')}"
+
+
+TOOLS = [twin_request, twin_map, twin_stack, twin_expand, twin_reground]

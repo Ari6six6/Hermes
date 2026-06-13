@@ -219,3 +219,55 @@ def expand(model: TwinModel, base_url: str, paths, *, fetch=_httpx_fetch,
     if was_sealed:
         model.seal()
     return {"added": added, "errors": errors}
+
+
+def reground(model: TwinModel, base_url: str, path: str, *, method: str = "GET",
+             query: str = "", body: str | None = None, fetch=None) -> dict:
+    """Re-check one request against the live target and correct the twin if its
+    stored sample has drifted. This is the live-accuracy loop: keep the twin equal
+    to the truth for the cases a build actually leans on, on demand. Read-only.
+
+    Returns {"status": "accurate" | "corrected" | "added" | "error", ...}.
+    """
+    fetch = fetch or _httpx_fetch
+    method = (method or "GET").upper()
+    if method not in ("GET", "HEAD"):
+        return {"status": "error", "detail": f"{method} is not a read-only check"}
+    old = model.respond(method, path, query, body)
+    root = base_url if base_url.endswith("/") else base_url + "/"
+    url = urljoin(root, path.lstrip("/"))
+    if query:
+        url = f"{url}?{query}"
+    try:
+        status, resp_headers, text = fetch(method, url, None)
+    except Exception as e:
+        return {"status": "error", "detail": f"{type(e).__name__}: {e}"}
+
+    new_ex = Exchange(
+        method=method, path=urlsplit(path).path or "/", query=urlsplit(path).query or query,
+        status=status, content_type=str(resp_headers.get("content-type", "")),
+        response_headers=_keep(resp_headers), response_body=text,
+        request_body=body, source="reground",
+    )
+    drifted = old is not None and (
+        old.status != status or (old.response_body or "") != (text or "")
+    )
+
+    was_sealed = model.is_sealed()
+    if old is None:
+        if was_sealed:
+            model.unseal()
+        model.add_exchange(new_ex)
+        if was_sealed:
+            model.seal()
+        return {"status": "added", "new": (status, text)}
+    if not drifted:
+        return {"status": "accurate", "value": (old.status, len(old.response_body or ""))}
+    if was_sealed:
+        model.unseal()
+    model.upsert_exchange(new_ex)
+    if was_sealed:
+        model.seal()
+    return {"status": "corrected",
+            "old": (old.status, old.response_body or ""),
+            "new": (status, text)}

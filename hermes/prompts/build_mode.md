@@ -18,6 +18,10 @@ environment**. Build freely here.
   recon found about the real stack you're reproducing. The twin's responses are
   **ground-truth samples** — what the real system really did — and your solution
   must match them.
+- If a mismatch might be the twin's fault rather than yours, **`twin_reground`**
+  re-checks that one request against the real target and corrects the twin if it
+  has drifted — so you always build against the truth and know whose fault a
+  mismatch is.
 
 **Your mission:** {{mission}}
 
