@@ -33,6 +33,8 @@ DEFAULTS: dict = {
     "history_max_prompts": 30,
     "summaries_max": 8,
     "allow_gpu_network": False,  # hard rule: internet goes through the phone
+    "oracle_capture_max": 200,  # max probes a single benign capture records
+    "oracle_capture_delay": 0.5,  # polite seconds between live reads while capturing
     "max_model_len": 0,  # 0 = pick automatically from detected VRAM
     "gpu_port": 8000,
     "local_port": 8000,

@@ -330,6 +330,72 @@ def cmd_host(cfg, args: str) -> None:
         print(dim("usage: host add <name> <ssh-string> [note] | list | rm <name>"))
 
 
+def cmd_target(cfg, args: str) -> None:
+    """The parity oracle: clone a target into a sealed replica the agent builds
+    against — never the live service."""
+    project = _current_project(cfg)
+    if project is None:
+        print(yellow("no current project"))
+        return
+    parts = args.split(maxsplit=1)
+    sub = parts[0] if parts else "show"
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    bundle = project.oracle()
+
+    if sub == "set":
+        if not rest.startswith(("http://", "https://")):
+            print(red("usage: target set <http(s)-url>"))
+            return
+        bundle.init(source=rest, mode="url", win_condition=bundle.win_condition)
+        print(green(f"target set: {rest}") + dim(" (unsealed)"))
+        print(dim("next: `target win <plain-English success>`, then `target capture [paths...]`"))
+
+    elif sub == "win":
+        if not bundle.exists():
+            print(yellow("no target yet — `target set <url>` first"))
+            return
+        if not rest:
+            print(bundle.win_condition or dim("(no winning condition set)"))
+            return
+        bundle.set_win_condition(rest)
+        print(green("winning condition recorded."))
+
+    elif sub == "capture":
+        if not bundle.exists():
+            print(yellow("no target yet — `target set <url>` first"))
+            return
+        from hermes import capture as capture_mod
+        specs = rest.split() if rest else None
+        colors = {"probe": green, "skip": yellow, "error": red, "done": cyan,
+                  "info": dim}
+
+        def on_event(kind, text):
+            print(colors.get(kind, dim)(f"  {text}"))
+
+        print(dim(f"benign capture of {bundle.source} (read-only, on the phone)..."))
+        report = capture_mod.capture(
+            bundle, bundle.source, specs,
+            max_probes=cfg.get("oracle_capture_max", 200),
+            delay=cfg.get("oracle_capture_delay", 0.5),
+            on_event=on_event,
+        )
+        if report["recorded"]:
+            print(green(f"sealed — {report['recorded']} probe(s). The agent now "
+                        "builds against this frozen replica."))
+        else:
+            print(red("nothing recorded — check the URL/paths and try again.")
+                  + dim(" (bundle sealed empty)"))
+
+    elif sub == "clear":
+        import shutil
+        if project.oracle_dir.exists():
+            shutil.rmtree(project.oracle_dir)
+        print(green("target cleared."))
+
+    else:  # show
+        print(bundle.summary())
+
+
 def cmd_config(cfg, args: str) -> None:
     args = args.strip()
     # accept both `config key value` and `config set key value` / `config get key`
@@ -397,6 +463,7 @@ HELP = f"""\
 {cyan('tools')}                 list the agent's tools
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
+{cyan('target')} set <url> | win <text> | capture [paths] | show | clear   parity oracle
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration
 {cyan('quit')}                  exit
@@ -422,6 +489,8 @@ def dispatch(cfg, line: str) -> bool:
         cmd_gpu(cfg, rest)
     elif cmd == "host":
         cmd_host(cfg, rest)
+    elif cmd == "target":
+        cmd_target(cfg, rest)
     elif cmd == "config":
         cmd_config(cfg, rest)
     elif cmd in ("mission", "notes", "history", "summaries"):

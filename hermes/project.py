@@ -60,6 +60,15 @@ class Project:
         return self.root / "runs"
 
     @property
+    def oracle_dir(self) -> Path:
+        return self.root / "oracle"
+
+    def oracle(self):
+        """The parity oracle bundle for this project (may be empty/unsealed)."""
+        from hermes.oracle import OracleBundle
+        return OracleBundle(self.oracle_dir)
+
+    @property
     def equipped_path(self) -> Path:
         return self.tools_dir / ".equipped.json"
 
