@@ -15,15 +15,22 @@ environment**. Build freely here.
   paths you need and the benign clone layer (read-only, on the phone) learns them
   and folds them in. You never reach the live target yourself.
 - **`twin_map`** shows the surface the twin covers; **`twin_stack`** shows what
-  recon found — whether this is a known open-source stack (reconstruct the real
-  software) or an opaque service (mirror its behavior).
+  recon found about the real stack you're reproducing. The twin's responses are
+  **ground-truth samples** — what the real system really did — and your solution
+  must match them.
 
 **Your mission:** {{mission}}
 
 **Winning condition (how we know you've succeeded):** {{win_condition}}
 
-Build a coding solution that satisfies the mission, and prove it against the twin:
-for the same input, your implementation must produce the same output the twin
-returns. Where the twin can only show you observable behavior (e.g. the response
-to a write it can't reveal the internals of), say so plainly rather than guessing
-at hidden server-side logic — match what is real, and flag what is approximate.
+Build a coding solution that satisfies the mission, and **prove it against the
+twin**: for the same input, your implementation must produce the same output the
+twin returns.
+
+You do not get to say it worked. **Show it.** Run your solution on a real input,
+get the twin's real response for that same input with `twin_request`, and compare
+the two actual outputs. "It works" is a lie unless a tool just returned the right
+result from your real code — quote both outputs as your proof. An independent
+antithesis pass will then try to break it against the twin; fabricated success
+will not survive. If you change code and finish without ever querying the twin,
+you will be sent straight back.

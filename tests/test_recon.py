@@ -1,5 +1,42 @@
 from hermes.twin.model import Exchange
-from hermes.twin.recon import StackReport, fingerprint
+from hermes.twin.recon import (
+    StackReport,
+    fingerprint,
+    interpret_exposure,
+    parse_crtsh,
+    parse_robots_paths,
+    parse_sitemap_paths,
+)
+
+
+def test_parse_crtsh_dedupes_and_strips_wildcards():
+    text = ('[{"name_value":"a.example.com\\n*.example.com"},'
+            '{"name_value":"b.example.com"},{"name_value":"a.example.com"}]')
+    assert parse_crtsh(text) == ["a.example.com", "b.example.com", "example.com"]
+
+
+def test_parse_crtsh_bad_json():
+    assert parse_crtsh("not json") == []
+
+
+def test_parse_robots_paths_pulls_disallow_and_sitemap():
+    robots = "User-agent: *\nDisallow: /admin\nDisallow: /\nAllow: /public\nSitemap: https://x/s.xml"
+    paths = parse_robots_paths(robots)
+    assert "/admin" in paths
+    assert "/public" in paths
+    assert "/" not in paths  # uninteresting catch-all dropped
+    assert any("s.xml" in p for p in paths)
+
+
+def test_parse_sitemap_paths():
+    xml = "<urlset><url><loc>https://x/a</loc></url><url><loc>https://x/b</loc></url></urlset>"
+    assert parse_sitemap_paths(xml) == ["https://x/a", "https://x/b"]
+
+
+def test_interpret_exposure():
+    assert "EXPOSED" in interpret_exposure("/.git/config", 200)
+    assert "protected" in interpret_exposure("/.env", 403)
+    assert interpret_exposure("/.env", 404) is None
 
 
 def _ex(path="/", body="", headers=None):

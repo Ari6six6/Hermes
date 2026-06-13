@@ -17,8 +17,84 @@ kind of twin the builder should stand up.
 
 from __future__ import annotations
 
+import json
 import re
 from dataclasses import asdict, dataclass, field
+
+# Read-only probes a capable recon agent runs to find the real source — exposed
+# VCS metadata, dependency manifests, build files. A 200 here is gold: it can
+# reveal the exact stack, dependencies, even the whole source history.
+EXPOSED_SOURCE_PATHS = (
+    "/.git/config", "/.git/HEAD", "/.svn/entries", "/.hg/requires",
+    "/.env", "/package.json", "/composer.json", "/composer.lock",
+    "/requirements.txt", "/Gemfile", "/go.mod", "/Dockerfile",
+    "/docker-compose.yml", "/.gitlab-ci.yml", "/wp-config.php.bak",
+)
+
+
+# Content-discovery wordlist: common dirs/paths a site exposes. Read-only GETs —
+# this is visibility of what's publicly reachable, not fuzzing or bypass.
+COMMON_PATHS = (
+    "/admin", "/login", "/logout", "/dashboard", "/account", "/user/login",
+    "/api", "/api/v1", "/api/v2", "/graphql", "/swagger", "/swagger-ui",
+    "/openapi.json", "/docs", "/redoc",
+    "/wp-admin", "/wp-login.php", "/wp-json", "/administrator", "/user",
+    "/config", "/settings", "/backup", "/backups", "/uploads", "/files",
+    "/static", "/assets", "/images", "/js", "/css", "/media",
+    "/robots.txt", "/sitemap.xml", "/.well-known/security.txt",
+    "/health", "/healthz", "/status", "/metrics", "/server-status",
+    "/phpinfo.php", "/info.php", "/test", "/dev", "/staging", "/old",
+    "/readme.html", "/README.md", "/CHANGELOG.md", "/license.txt",
+)
+
+
+def parse_robots_paths(text: str) -> list[str]:
+    """Paths the owner names in robots.txt (Disallow/Allow/Sitemap) — often the
+    most interesting dirs, since they're the ones they'd rather hide."""
+    out: list[str] = []
+    for line in (text or "").splitlines():
+        line = line.strip()
+        m = re.match(r"(?:dis)?allow:\s*(\S+)", line, re.I)
+        if m and m.group(1) not in ("/", "*"):
+            out.append(m.group(1))
+        m = re.match(r"sitemap:\s*(\S+)", line, re.I)
+        if m:
+            out.append(m.group(1))
+    seen, uniq = set(), []
+    for p in out:
+        if p not in seen:
+            seen.add(p)
+            uniq.append(p)
+    return uniq
+
+
+def parse_sitemap_paths(text: str) -> list[str]:
+    """URLs/paths listed in a sitemap.xml."""
+    return re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", text or "", re.I)
+
+
+def parse_crtsh(text: str) -> list[str]:
+    """Subdomains from a crt.sh JSON response (public certificate transparency)."""
+    try:
+        data = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return []
+    names: set[str] = set()
+    for row in data if isinstance(data, list) else []:
+        for n in str(row.get("name_value", "")).splitlines():
+            n = n.strip().lstrip("*.").lower()
+            if n and " " not in n:
+                names.add(n)
+    return sorted(names)
+
+
+def interpret_exposure(path: str, status: int) -> str | None:
+    """A human-readable finding for an exposed-source probe, or None if nothing."""
+    if status == 200:
+        return f"EXPOSED ({status}) {path} — pull it; it likely reveals the real stack/source"
+    if status in (401, 403):
+        return f"present but protected ({status}) {path}"
+    return None
 
 # (label, header-name, regex over the value, optional version group)
 _HEADER_RULES = [

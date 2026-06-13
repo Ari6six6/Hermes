@@ -25,6 +25,7 @@ DEFAULTS: dict = {
     "max_turns": 40,
     "stall_nudges": 2,  # bounce prose-only turns back N times before accepting them as final
     "phantom_nudges": 1,  # bounce a finish that pasted code but wrote/ran nothing
+    "build_proof_nudges": 1,  # in build mode, bounce a finish that never checked the twin
     "verify_code_runs": True,  # after a code task, an independent pass re-runs it in the sandbox
     "verify_rounds": 2,  # how many times that pass may bounce a failed run back
     "verify_max_turns": 6,  # tool-call budget inside one verification pass

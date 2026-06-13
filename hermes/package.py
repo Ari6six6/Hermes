@@ -163,6 +163,10 @@ def phantom_nudge() -> str:
     return (PROMPTS_DIR / "phantom.md").read_text().strip()
 
 
+def build_proof_nudge() -> str:
+    return (PROMPTS_DIR / "build_proof.md").read_text().strip()
+
+
 def verifier_prompt() -> str:
     return (PROMPTS_DIR / "verifier.md").read_text().strip()
 

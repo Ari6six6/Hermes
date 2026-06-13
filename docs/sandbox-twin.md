@@ -11,21 +11,19 @@ The point isn't to save a few responses — it's to stand up a copy of the syste
 that *runs*. To the agent and the code it writes, the twin behaves like the
 target's API — but it's offline, safe, and yours.
 
-## Two kinds of twin, one interface
+## The twin is the reconstructed real software
 
-The twin is an *interface*: an HTTP endpoint that behaves like the target. There
-are two ways to stand it up, and recon decides which:
+We don't chase closed-source black boxes. The twin is the **real software running
+in the sandbox**: for a known open-source stack (WordPress, Drupal, Django, Rails,
+Laravel, Express, ...), recon fingerprints it, the builder pulls the public source
++ runtime off the web, and stands up an actual instance in the box. Near-perfect,
+because the twin literally *is* the software.
 
-- **Behavioral twin** — recorded real responses, served by
-  `hermes/twin/server.py`. For **opaque / bespoke** services whose logic is
-  hidden. Faithful for observable behavior, approximate for hidden internals.
-- **Reconstructed twin** — the *real software* running in the sandbox. For
-  **known open-source stacks** (WordPress, Drupal, Django, ...): recon fingerprints
-  the stack, the builder pulls the public source + runtime off the web and stands
-  up an actual instance in the box. Near-perfect, because the twin literally *is*
-  the software.
-
-The thesis and antithesis don't care which is behind the endpoint.
+Captured responses are not a substitute twin — they are **ground-truth samples**:
+real input→output pairs from the target that the builder uses to *prove the
+reconstruction behaves like the original*, and that the antithesis uses as ammo.
+(`hermes/twin/server.py` can replay those samples as a reference responder for
+diffing; it is not the twin.)
 
 ## Three roles (all the same weights, different phase/prompt/tools)
 
@@ -37,9 +35,10 @@ The thesis and antithesis don't care which is behind the endpoint.
 3. **Antithesis** — try to break it; prove it fails the winning condition,
    diffing against the twin.
 
-The roles *are* the compartmentalization: only **recon** ever touches the live
-target, and only read-only; **thesis/antithesis** are sealed off in build mode and
-see only the twin.
+The roles *are* the compartmentalization, and **the seal is the boundary that
+enforces it**: while the twin is OPEN the agent has the live recon tools (inspect
+the site as intimately as is legal — read-only, no fuzzing or bypass); the moment
+it's SEALED those tools are gone and only the frozen twin remains.
 
 ## Winning condition = proven functional code
 
@@ -49,6 +48,16 @@ twin and genuinely pass, under the codebase's anti-fabrication guards (a test th
 can't fail is worthless; quote real output or it didn't happen). The antithesis's
 job is to make that proof fail; synthesis is when it can't. English states the
 goal; passing code *is* the win.
+
+### "Told my guy it worked and pissed off" — the gate against it
+
+The failure mode this whole system exists to kill: declaring success without doing
+the work. A first concrete guard ships now (`hermes/agent.py`): in build mode (a
+sealed twin), if the agent changes code and calls `finish_run` **without ever
+querying the twin** to check it, the finish is bounced (`prompts/build_proof.md`)
+— go prove parity with a real query, don't claim it. The full antithesis pass
+(independent re-run + diff against the twin, anti-collusion: no STANDS without real
+executed output) builds on the existing verifier in a later slice.
 
 ## Why it's compartmentalized (the live-server rule)
 
@@ -94,7 +103,8 @@ they target observable behavior.
 |-----------|------|------|
 | Model | `hermes/twin/model.py` | The sealed model: manifest + `exchanges.jsonl` + captured spec + stack fingerprint. Exact-match lookup, route map. |
 | Clone engine | `hermes/twin/clone.py` | The live-touching component. Autonomous, comprehensive, benign; injectable `fetch`. `clone()` + `expand()`. |
-| Recon | `hermes/twin/recon.py` | Deterministic stack fingerprinting (server/runtime/framework/CMS + version). Decides behavioral vs reconstructed twin. |
+| Recon | `hermes/twin/recon.py` | Stack fingerprinting + recon helpers (subdomains, exposed-source, dir-scan, robots/sitemap mining). |
+| Recon tools | `hermes/tools/recon.py` | The recon agent's read-only eyes: `recon_subdomains` / `recon_sources` / `recon_dirscan`. Register only while the twin is OPEN. |
 | Runtime twin | `hermes/twin/server.py` | Self-contained stdlib HTTP server. Exact-replay or miss. Runs standalone on the box: `python3 server.py <model-dir> <port>`. |
 | Agent tools | `hermes/tools/twin.py` | `twin_request` / `twin_map` / `twin_stack` / `twin_expand`. Register only when a sealed twin exists. |
 | Build framing | `hermes/prompts/build_mode.md` | Injected into the system prompt: "you are building against a safe twin, here is the mission + winning condition." |

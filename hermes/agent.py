@@ -23,6 +23,11 @@ MAX_CONSECUTIVE_ERRORS = 3
 # pass. (Running-only tasks like "check the logs" don't need code-verifying.)
 CODE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "remote_write"})
 
+# In build mode, checking your work against the twin means actually querying it.
+# Finishing a code change without ever doing this is the "told my guy it worked
+# and pissed off" move — the one thing the build is built to prevent.
+BUILD_PROOF_TOOLS = frozenset({"twin_request"})
+
 # A fenced, multi-line code block in the final answer: ```lang\n...\n```
 CODE_FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.S)
 
@@ -100,6 +105,12 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     max_turns = cfg.get("max_turns", 20)
     nudges_left = cfg.get("stall_nudges", 2)
     phantom_nudges_left = cfg.get("phantom_nudges", 1)
+    # Build mode = this project has a sealed twin to prove work against.
+    try:
+        twin_sealed = project.twin().is_sealed()
+    except Exception:
+        twin_sealed = False
+    build_proof_nudges_left = cfg.get("build_proof_nudges", 1) if twin_sealed else 0
     # Independent verification only runs when there's a real sandbox to run the
     # code in (a GPU box) and the operator hasn't switched it off.
     verify_rounds_left = (
@@ -186,6 +197,22 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     log({"role": "user", "content": nudge})
                     print(yellow("  (code in the answer but nothing written or "
                                  "run — bouncing back to actually do it)"))
+                    continue
+                if (
+                    build_proof_nudges_left > 0
+                    and (set(tool_names_used) & CODE_WRITE_TOOLS)
+                    and not (set(tool_names_used) & BUILD_PROOF_TOOLS)
+                ):
+                    # Build mode: changed code but never checked it against the
+                    # twin. That's the "tell my guy it worked and piss off" move.
+                    # Send it back to prove parity with a real query, not a claim.
+                    build_proof_nudges_left -= 1
+                    ctx.finish_summary = None
+                    nudge = package.build_proof_nudge()
+                    messages.append({"role": "user", "content": nudge})
+                    log({"role": "user", "content": nudge})
+                    print(red("  (build: code changed but never run against the "
+                              "twin — sending it back to PROVE it, not claim it)"))
                     continue
                 if verify_rounds_left > 0 and (
                     set(tool_names_used) & CODE_WRITE_TOOLS

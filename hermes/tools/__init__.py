@@ -198,11 +198,19 @@ def build_registry(project, cfg, confirm_fn) -> ToolRegistry:
         for t in hosts_tools.TOOLS:
             registry.register(t)
 
-    # Twin tools only exist once the operator has cloned and sealed a target —
-    # a faithful, safe local copy the agent builds against (never the live one).
+    # The seal is the phase boundary. While the twin is OPEN we're in the
+    # recon/builder phase: the agent gets read-only recon tools that may touch the
+    # live target. Once SEALED, the build phase begins: only the frozen twin, no
+    # live access — that separation is the compartmentalization.
     from hermes.twin.model import TwinModel
 
-    if TwinModel(project.twin_dir).is_sealed():
+    twin_model = TwinModel(project.twin_dir)
+    if twin_model.exists() and not twin_model.is_sealed():
+        from hermes.tools import recon as recon_tools
+
+        for t in recon_tools.TOOLS:
+            registry.register(t)
+    elif twin_model.is_sealed():
         from hermes.tools import twin as twin_tools
 
         for t in twin_tools.TOOLS:
