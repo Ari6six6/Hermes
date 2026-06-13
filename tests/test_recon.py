@@ -2,7 +2,7 @@ from hermes.twin.model import Exchange
 from hermes.twin.recon import (
     StackReport,
     fingerprint,
-    interpret_exposure,
+    interpret_source_hit,
     parse_crtsh,
     parse_robots_paths,
     parse_sitemap_paths,
@@ -33,10 +33,10 @@ def test_parse_sitemap_paths():
     assert parse_sitemap_paths(xml) == ["https://x/a", "https://x/b"]
 
 
-def test_interpret_exposure():
-    assert "EXPOSED" in interpret_exposure("/.git/config", 200)
-    assert "protected" in interpret_exposure("/.env", 403)
-    assert interpret_exposure("/.env", 404) is None
+def test_interpret_source_hit():
+    assert "found" in interpret_source_hit("/.git/config", 200)
+    assert "auth" in interpret_source_hit("/.env", 403)
+    assert interpret_source_hit("/.env", 404) is None
 
 
 def _ex(path="/", body="", headers=None):

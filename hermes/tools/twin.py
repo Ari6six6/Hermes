@@ -3,8 +3,8 @@
 The twin is a faithful, SAFE, local copy of the target — not the live service. It
 serves the target's real captured responses exactly, and declares a miss for
 anything it hasn't seen rather than inventing an answer. When the agent needs a
-case the twin lacks, `twin_expand` asks the (benign, read-only) clone layer to go
-learn it and fold it in — the agent itself never touches the live target.
+case the twin lacks, `twin_expand` asks the clone step (on the phone) to go learn
+it and fold it in — the agent itself never touches the live target.
 
 These tools only register when a sealed twin exists for the project.
 """
@@ -96,9 +96,9 @@ def twin_stack(args, ctx):
 @tool(
     "twin_expand",
     "Grow the twin to cover requests it's missing. Give the paths you need; the "
-    "benign clone layer fetches them read-only from the target (on the phone, "
-    "never from here) and folds them into the twin. Use this when twin_request "
-    "returns a MISS for something you legitimately need.",
+    "clone step fetches them from the target (on the phone, never from here) and "
+    "folds them into the twin. Use this when twin_request returns a MISS for "
+    "something you need.",
     obj_schema(
         {"paths": {"type": "array", "items": {"type": "string"},
                    "description": "paths to learn, e.g. ['/users/2', '/users/3']"}},

@@ -36,9 +36,10 @@ diffing; it is not the twin.)
    diffing against the twin.
 
 The roles *are* the compartmentalization, and **the seal is the boundary that
-enforces it**: while the twin is OPEN the agent has the live recon tools (inspect
-the site as intimately as is legal — read-only, no fuzzing or bypass); the moment
-it's SEALED those tools are gone and only the frozen twin remains.
+enforces it**: while the twin is OPEN the agent has the recon tools to get to know
+the target thoroughly (plain GET requests — map directories/endpoints, find source
+and dependency files, list subdomains); the moment it's SEALED those tools are gone
+and only the frozen twin remains.
 
 ## Winning condition = proven functional code
 
@@ -67,18 +68,18 @@ property worth keeping. So the system is split so that by the time the model is
 and it is told so plainly (`hermes/prompts/build_mode.md`).
 
 ```
-  LIVE TARGET ──(benign clone, operator-driven, on the phone)──> SEALED TWIN ──> BUILD
-     │              read-only · capped · polite                   runtime copy     agent
-   touched only by the clone layer, never by the building agent              (safe exec env)
+  LIVE TARGET ──(read-only clone, operator-driven, on the phone)──> SEALED TWIN ──> BUILD
+     │              GET · capped · polite                            runtime copy     agent
+   touched only by the clone step, never by the building agent                (safe exec env)
 ```
 
-- **Cloning is not an agent tool.** The agent never decides to poke a live
-  service. The operator kicks it off (`project build <name> <url>`), on the phone,
-  where every byte is visible.
-- **Cloning is benign by construction:** read-only GETs only, a hard request cap,
-  a polite delay between requests.
+- **Cloning is not an agent tool.** The agent never decides to reach a live
+  service on its own. The operator kicks it off (`project build <name> <url>`), on
+  the phone, where every byte is visible.
+- **Cloning is read-only by construction:** GETs only, a hard request cap, a
+  polite delay between requests.
 - **When the agent needs a case the twin lacks**, it calls `twin_expand`, which
-  routes back to the same benign clone layer to learn it read-only and fold it in.
+  routes back to the same clone step to learn it and fold it in.
   The building agent still never touches the live target.
 
 ## The accuracy rule: the twin never invents a response
@@ -102,7 +103,7 @@ they target observable behavior.
 | Component | File | Role |
 |-----------|------|------|
 | Model | `hermes/twin/model.py` | The sealed model: manifest + `exchanges.jsonl` + captured spec + stack fingerprint. Exact-match lookup, route map. |
-| Clone engine | `hermes/twin/clone.py` | The live-touching component. Autonomous, comprehensive, benign; injectable `fetch`. `clone()` + `expand()`. |
+| Clone engine | `hermes/twin/clone.py` | The live-touching component. Autonomous, comprehensive, read-only; injectable `fetch`. `clone()` + `expand()`. |
 | Recon | `hermes/twin/recon.py` | Stack fingerprinting + recon helpers (subdomains, exposed-source, dir-scan, robots/sitemap mining). |
 | Recon tools | `hermes/tools/recon.py` | The recon agent's read-only eyes: `recon_subdomains` / `recon_sources` / `recon_dirscan`. Register only while the twin is OPEN. |
 | Runtime twin | `hermes/twin/server.py` | Self-contained stdlib HTTP server. Exact-replay or miss. Runs standalone on the box: `python3 server.py <model-dir> <port>`. |

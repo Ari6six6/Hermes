@@ -9,10 +9,10 @@ Two kinds of target, two kinds of twin:
     because that software is public and downloadable. Far higher fidelity than a
     mock: the twin literally *is* the software.
 
-This module is deterministic black-box detection over responses the (read-only,
-benign) recon pass already fetched — server, runtime, framework/CMS and versions,
-read from headers, generator tags, cookies, and well-known paths. It decides which
-kind of twin the builder should stand up.
+This module is deterministic detection over responses the recon pass already
+fetched — server, runtime, framework/CMS and versions, read from headers,
+generator tags, cookies, and well-known paths. It tells the builder which stack to
+stand up.
 """
 
 from __future__ import annotations
@@ -21,10 +21,10 @@ import json
 import re
 from dataclasses import asdict, dataclass, field
 
-# Read-only probes a capable recon agent runs to find the real source — exposed
-# VCS metadata, dependency manifests, build files. A 200 here is gold: it can
-# reveal the exact stack, dependencies, even the whole source history.
-EXPOSED_SOURCE_PATHS = (
+# Paths that, when present, hand you the real source directly — VCS metadata,
+# dependency manifests, build files. A 200 here is a shortcut to the exact stack,
+# the dependencies, sometimes the whole source you'll rebuild from.
+SOURCE_FILE_PATHS = (
     "/.git/config", "/.git/HEAD", "/.svn/entries", "/.hg/requires",
     "/.env", "/package.json", "/composer.json", "/composer.lock",
     "/requirements.txt", "/Gemfile", "/go.mod", "/Dockerfile",
@@ -32,8 +32,8 @@ EXPOSED_SOURCE_PATHS = (
 )
 
 
-# Content-discovery wordlist: common dirs/paths a site exposes. Read-only GETs —
-# this is visibility of what's publicly reachable, not fuzzing or bypass.
+# Common dirs/paths a site serves — checked with plain GETs to learn which parts
+# of the structure exist, so the rebuild covers them.
 COMMON_PATHS = (
     "/admin", "/login", "/logout", "/dashboard", "/account", "/user/login",
     "/api", "/api/v1", "/api/v2", "/graphql", "/swagger", "/swagger-ui",
@@ -49,8 +49,8 @@ COMMON_PATHS = (
 
 
 def parse_robots_paths(text: str) -> list[str]:
-    """Paths the owner names in robots.txt (Disallow/Allow/Sitemap) — often the
-    most interesting dirs, since they're the ones they'd rather hide."""
+    """Paths the site lists in robots.txt (Disallow/Allow/Sitemap) — a ready-made
+    map of directories worth covering in the rebuild."""
     out: list[str] = []
     for line in (text or "").splitlines():
         line = line.strip()
@@ -88,12 +88,12 @@ def parse_crtsh(text: str) -> list[str]:
     return sorted(names)
 
 
-def interpret_exposure(path: str, status: int) -> str | None:
-    """A human-readable finding for an exposed-source probe, or None if nothing."""
+def interpret_source_hit(path: str, status: int) -> str | None:
+    """A human-readable note for a source-file check, or None if nothing useful."""
     if status == 200:
-        return f"EXPOSED ({status}) {path} — pull it; it likely reveals the real stack/source"
+        return f"found ({status}) {path} — fetch it; it reveals the real stack/source"
     if status in (401, 403):
-        return f"present but protected ({status}) {path}"
+        return f"present but needs auth ({status}) {path}"
     return None
 
 # (label, header-name, regex over the value, optional version group)

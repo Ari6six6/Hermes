@@ -199,9 +199,9 @@ def build_registry(project, cfg, confirm_fn) -> ToolRegistry:
             registry.register(t)
 
     # The seal is the phase boundary. While the twin is OPEN we're in the
-    # recon/builder phase: the agent gets read-only recon tools that may touch the
-    # live target. Once SEALED, the build phase begins: only the frozen twin, no
-    # live access — that separation is the compartmentalization.
+    # recon/builder phase: the agent gets the recon tools for getting to know the
+    # target. Once SEALED, the build phase begins: only the frozen twin to work
+    # against.
     from hermes.twin.model import TwinModel
 
     twin_model = TwinModel(project.twin_dir)

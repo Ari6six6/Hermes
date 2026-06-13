@@ -26,7 +26,7 @@ def test_recon_sources_reports_exposed(project, cfg, monkeypatch):
         return (200, "ref: x") if url.endswith("/.git/config") else (404, "")
     monkeypatch.setattr(recon_tools, "_get", fake_get)
     out = recon_tools.recon_sources.fn({"url": "https://example.com"}, _ctx(project, cfg))
-    assert "EXPOSED" in out and "/.git/config" in out
+    assert "found" in out and "/.git/config" in out
 
 
 def test_recon_dirscan_finds_paths_and_mines_robots(project, cfg, monkeypatch):
