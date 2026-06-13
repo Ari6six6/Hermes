@@ -122,6 +122,28 @@ def cmd_project(cfg, args: str) -> None:
         cfg.set("current_project", parts[1])
         cfg.save()
         print(green(f"project '{parts[1]}' created and selected.") + dim(" Edit its mission: `mission edit`"))
+    elif sub == "build" and len(parts) >= 3:
+        name, url = parts[1], parts[2]
+        if not url.startswith(("http://", "https://")):
+            print(red("usage: project build <name> <http(s)-url>"))
+            return
+        try:
+            project = Project.create(pdir, name)
+        except ProjectError as e:
+            print(red(e))
+            return
+        cfg.set("current_project", name)
+        cfg.save()
+        twin = project.twin()
+        twin.init(source=url, mode="url")
+        report = _clone_target(cfg, twin, url)
+        if report["exchanges"]:
+            print(green(f"build project '{name}' ready — twin has "
+                        f"{report['exchanges']} exchange(s)."))
+            print(dim("next: set the goal — `mission edit` and `build win <plain-English success>` — then `run`"))
+        else:
+            print(red("nothing cloned — check the URL and try `build clone`.")
+                  + dim(" (twin sealed empty)"))
     elif sub == "use" and len(parts) > 1:
         try:
             Project.load(pdir, parts[1])
@@ -330,70 +352,64 @@ def cmd_host(cfg, args: str) -> None:
         print(dim("usage: host add <name> <ssh-string> [note] | list | rm <name>"))
 
 
-def cmd_target(cfg, args: str) -> None:
-    """The parity oracle: clone a target into a sealed replica the agent builds
-    against — never the live service."""
+def _clone_target(cfg, twin, url: str) -> dict:
+    """Run the benign clone of a target into a twin, with live progress."""
+    from hermes.twin import clone as clone_mod
+    colors = {"exchange": green, "spec": cyan, "error": red, "done": cyan}
+
+    def on_event(kind, text):
+        print(colors.get(kind, dim)(f"  {text}"))
+
+    print(dim(f"cloning {url} into a runtime twin (read-only, on the phone)..."))
+    return clone_mod.clone(
+        twin, url,
+        fetch=clone_mod._httpx_fetch,
+        max_exchanges=cfg.get("twin_clone_max", 200),
+        delay=cfg.get("twin_clone_delay", 0.5),
+        max_depth=cfg.get("twin_clone_depth", 2),
+        on_event=on_event,
+    )
+
+
+def cmd_build(cfg, args: str) -> None:
+    """The runtime twin: clone a target into a faithful, safe local copy the
+    agent builds against — never the live service."""
     project = _current_project(cfg)
     if project is None:
-        print(yellow("no current project"))
+        print(yellow("no current project") + dim(" — `project build <name> <url>` to start one"))
         return
     parts = args.split(maxsplit=1)
     sub = parts[0] if parts else "show"
     rest = parts[1].strip() if len(parts) > 1 else ""
-    bundle = project.oracle()
+    twin = project.twin()
 
-    if sub == "set":
-        if not rest.startswith(("http://", "https://")):
-            print(red("usage: target set <http(s)-url>"))
-            return
-        bundle.init(source=rest, mode="url", win_condition=bundle.win_condition)
-        print(green(f"target set: {rest}") + dim(" (unsealed)"))
-        print(dim("next: `target win <plain-English success>`, then `target capture [paths...]`"))
-
-    elif sub == "win":
-        if not bundle.exists():
-            print(yellow("no target yet — `target set <url>` first"))
+    if sub == "win":
+        if not twin.exists():
+            print(yellow("no target yet — `project build <name> <url>` first"))
             return
         if not rest:
-            print(bundle.win_condition or dim("(no winning condition set)"))
+            print(twin.win_condition or dim("(no winning condition set)"))
             return
-        bundle.set_win_condition(rest)
+        twin.set_win_condition(rest)
         print(green("winning condition recorded."))
 
-    elif sub == "capture":
-        if not bundle.exists():
-            print(yellow("no target yet — `target set <url>` first"))
+    elif sub == "clone":  # re-clone (e.g. after changing depth/cap), or first time
+        if not twin.exists():
+            print(yellow("no target yet — `project build <name> <url>` first"))
             return
-        from hermes import capture as capture_mod
-        specs = rest.split() if rest else None
-        colors = {"probe": green, "skip": yellow, "error": red, "done": cyan,
-                  "info": dim}
-
-        def on_event(kind, text):
-            print(colors.get(kind, dim)(f"  {text}"))
-
-        print(dim(f"benign capture of {bundle.source} (read-only, on the phone)..."))
-        report = capture_mod.capture(
-            bundle, bundle.source, specs,
-            max_probes=cfg.get("oracle_capture_max", 200),
-            delay=cfg.get("oracle_capture_delay", 0.5),
-            on_event=on_event,
-        )
-        if report["recorded"]:
-            print(green(f"sealed — {report['recorded']} probe(s). The agent now "
-                        "builds against this frozen replica."))
-        else:
-            print(red("nothing recorded — check the URL/paths and try again.")
-                  + dim(" (bundle sealed empty)"))
+        mission, win = twin.mission, twin.win_condition
+        twin.init(source=twin.source, mode="url", mission=mission, win_condition=win)
+        report = _clone_target(cfg, twin, twin.source)
+        print(green(f"twin sealed — {report['exchanges']} exchange(s)."))
 
     elif sub == "clear":
         import shutil
-        if project.oracle_dir.exists():
-            shutil.rmtree(project.oracle_dir)
-        print(green("target cleared."))
+        if project.twin_dir.exists():
+            shutil.rmtree(project.twin_dir)
+        print(green("twin cleared."))
 
     else:  # show
-        print(bundle.summary())
+        print(twin.summary())
 
 
 def cmd_config(cfg, args: str) -> None:
@@ -463,7 +479,8 @@ HELP = f"""\
 {cyan('tools')}                 list the agent's tools
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
-{cyan('target')} set <url> | win <text> | capture [paths] | show | clear   parity oracle
+{cyan('project')} build <name> <url>   clone a target into a runtime twin to build against
+{cyan('build')} win <text> | clone | show | clear      the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration
 {cyan('quit')}                  exit
@@ -489,8 +506,8 @@ def dispatch(cfg, line: str) -> bool:
         cmd_gpu(cfg, rest)
     elif cmd == "host":
         cmd_host(cfg, rest)
-    elif cmd == "target":
-        cmd_target(cfg, rest)
+    elif cmd == "build":
+        cmd_build(cfg, rest)
     elif cmd == "config":
         cmd_config(cfg, rest)
     elif cmd in ("mission", "notes", "history", "summaries"):

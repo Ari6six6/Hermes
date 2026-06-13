@@ -198,14 +198,14 @@ def build_registry(project, cfg, confirm_fn) -> ToolRegistry:
         for t in hosts_tools.TOOLS:
             registry.register(t)
 
-    # Parity-oracle tools only exist once the operator has captured and sealed a
-    # target — a frozen replica the agent can replay against (never live).
-    from hermes.oracle import OracleBundle
+    # Twin tools only exist once the operator has cloned and sealed a target —
+    # a faithful, safe local copy the agent builds against (never the live one).
+    from hermes.twin.model import TwinModel
 
-    if OracleBundle(project.oracle_dir).is_sealed():
-        from hermes.tools import oracle as oracle_tools
+    if TwinModel(project.twin_dir).is_sealed():
+        from hermes.tools import twin as twin_tools
 
-        for t in oracle_tools.TOOLS:
+        for t in twin_tools.TOOLS:
             registry.register(t)
 
     # Equipped library tools (shipped with the app — trusted).

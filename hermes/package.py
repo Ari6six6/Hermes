@@ -71,10 +71,33 @@ def build_system_prompt(project: Project, env: dict) -> str:
         "toolbox_catalog": toolbox_catalog(),
     }
     system = render(template, variables)
+    build = build_mode_block(project)
+    if build:
+        system += "\n\n" + build
     persona = read_persona().strip()
     if persona:
         system += "\n\n## Persona\n\n" + persona
     return system
+
+
+def build_mode_block(project: Project) -> str:
+    """When a sealed twin exists, tell the agent plainly: it is building against a
+    faithful, SAFE copy of the target — a safe execution environment — not the
+    live system. This is what unlocks it to work freely without tripping the
+    don't-touch-live-servers reflex."""
+    try:
+        twin = project.twin()
+    except Exception:
+        return ""
+    if not twin.is_sealed():
+        return ""
+    manifest = twin.read_manifest()
+    return render((PROMPTS_DIR / "build_mode.md").read_text(), {
+        "source": manifest.get("source", "(unknown)"),
+        "exchange_count": manifest.get("exchange_count", 0),
+        "mission": manifest.get("mission") or "(set the mission with `mission edit`)",
+        "win_condition": manifest.get("win_condition") or "(set it with `build win <text>`)",
+    })
 
 
 def assemble(project: Project, prompt: str, env: dict, cfg: Config) -> list[dict]:
