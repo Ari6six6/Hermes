@@ -206,9 +206,10 @@ def build_registry(project, cfg, confirm_fn) -> ToolRegistry:
 
     twin_model = TwinModel(project.twin_dir)
     if twin_model.exists() and not twin_model.is_sealed():
+        from hermes.tools import builder as builder_tools
         from hermes.tools import recon as recon_tools
 
-        for t in recon_tools.TOOLS:
+        for t in (*recon_tools.TOOLS, *builder_tools.TOOLS):
             registry.register(t)
     elif twin_model.is_sealed():
         from hermes.tools import twin as twin_tools

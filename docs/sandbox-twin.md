@@ -105,35 +105,50 @@ they target observable behavior.
 | Model | `hermes/twin/model.py` | The sealed model: manifest + `exchanges.jsonl` + captured spec + stack fingerprint. Exact-match lookup, route map. |
 | Clone engine | `hermes/twin/clone.py` | The live-touching component. Autonomous, comprehensive, read-only; injectable `fetch`. `clone()` + `expand()`. |
 | Recon | `hermes/twin/recon.py` | Stack fingerprinting + recon helpers (subdomains, exposed-source, dir-scan, robots/sitemap mining). |
-| Recon tools | `hermes/tools/recon.py` | The recon agent's read-only eyes: `recon_subdomains` / `recon_sources` / `recon_dirscan`. Register only while the twin is OPEN. |
+| Recon tools | `hermes/tools/recon.py` | The recon agent's eyes: `recon_subdomains` / `recon_sources` / `recon_dirscan`. Register only while the twin is OPEN. |
+| Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_seal`. Register only while the twin is OPEN. |
+| Recon/build framing | `hermes/prompts/recon_build.md` | Injected while the twin is OPEN: "get to know the target, stand up the twin, prove it, seal it." |
 | Runtime twin | `hermes/twin/server.py` | Self-contained stdlib HTTP server. Exact-replay or miss. Runs standalone on the box: `python3 server.py <model-dir> <port>`. |
-| Agent tools | `hermes/tools/twin.py` | `twin_request` / `twin_map` / `twin_stack` / `twin_expand`. Register only when a sealed twin exists. |
-| Build framing | `hermes/prompts/build_mode.md` | Injected into the system prompt: "you are building against a safe twin, here is the mission + winning condition." |
-| CLI | `hermes/cli.py` | `project build <name> <url>`; `build win|clone|show|clear`. |
+| Build tools | `hermes/tools/twin.py` | `twin_request` / `twin_map` / `twin_stack` / `twin_expand` / `twin_reground`. Register only when a sealed twin exists. |
+| Build framing | `hermes/prompts/build_mode.md` | Injected once sealed: "build against the safe twin; show, don't claim; here's the mission + winning condition." |
+| Anti-bail gate | `hermes/agent.py` + `prompts/build_proof.md` | Bounces a build-mode finish that changed code but never queried the twin. |
+| CLI | `hermes/cli.py` | `project build <name> <url>`; `build win|clone|seal|show|clear`. |
+
+## The phases, and the seal between them
+
+The seal is the boundary. A twin is **OPEN** during recon/build and **SEALED**
+during build, and the registry + system prompt swap with it:
+
+| | Twin OPEN (recon/build) | Twin SEALED (build) |
+|---|---|---|
+| Role | recon / builder | thesis, then antithesis |
+| Prompt | `recon_build.md` | `build_mode.md` |
+| Tools | recon (`recon_*`) + builder (`twin_record/clone/seal`) | `twin_request/map/stack/expand/reground` |
+| Live target | read-only, to learn & build the twin | never (only `twin_expand`/`twin_reground`, narrowly) |
+| Anti-bail gate | off | on |
 
 ## Operator flow
 
 ```
-project build shopapi https://api.example.com    # clone -> seal a runtime twin
+project build shopapi https://api.example.com    # create project, seed an OPEN twin
 mission edit                                       # what to build
-build win Reimplement /products so responses byte-match the twin
-run go                                             # the agent builds against the twin
+build win Reimplement /products so responses match the twin
+run get to know the target and stand up the twin  # recon/builder agent -> twin_seal
+run build /products to meet the winning condition # thesis builds against the sealed twin
 ```
 
-Mission (what to build) and winning condition (how we know it's done) are two
-distinct, plain-English fields, both set by the operator.
+`project build` seeds the twin but leaves it open so the **recon/builder agent**
+stands it up and seals it (`twin_seal`). For a quick path without the agent, `build
+seal` freezes the seed as-is. Mission (what to build) and winning condition (how we
+know it's done) are two distinct, plain-English fields.
 
 ## What's next
 
-1. **The recon/builder agent role**: turn recon from a deterministic helper into
-   an agent phase that fingerprints, gathers (recordings or public source +
-   runtime), stands up the twin in the box, and proves it behaves like the target.
-2. **`build serve`** (behavioral twin): deploy the standalone twin to the GPU box
-   on `localhost:<twin_port>` so the solution and its tests hit it like the real
-   API.
-3. **The dialectic build loop**: thesis builds against the twin; antithesis
-   diffs the solution against it, with the anti-collusion rule — a STANDS verdict
-   is invalid without a real executed command + its actual output. Extends the
+1. **`build serve`**: deploy the standalone twin to the GPU box on
+   `localhost:<twin_port>` so the solution and its tests hit it like the real API.
+2. **The dialectic build loop**: thesis builds against the twin; antithesis diffs
+   the solution against it, with the anti-collusion rule — a STANDS verdict is
+   invalid without a real executed command + its actual output. Extends the
    independent-verifier pass in `hermes/agent.py`. "Winning" = the proof harness
    genuinely passes.
-4. **`repo` mode**: clone + build + run a reference codebase to produce the twin.
+3. **`repo` mode**: clone + build + run a reference codebase to produce the twin.

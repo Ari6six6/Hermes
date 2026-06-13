@@ -136,14 +136,12 @@ def cmd_project(cfg, args: str) -> None:
         cfg.save()
         twin = project.twin()
         twin.init(source=url, mode="url")
-        report = _clone_target(cfg, twin, url)
-        if report["exchanges"]:
-            print(green(f"build project '{name}' ready — twin has "
-                        f"{report['exchanges']} exchange(s)."))
-            print(dim("next: set the goal — `mission edit` and `build win <plain-English success>` — then `run`"))
-        else:
-            print(red("nothing cloned — check the URL and try `build clone`.")
-                  + dim(" (twin sealed empty)"))
+        report = _clone_target(cfg, twin, url, seal=False)
+        print(green(f"build project '{name}' created — twin seeded with "
+                    f"{report['exchanges']} sample(s) (open)."))
+        print(dim("recon/build phase. Set the goal — `mission edit` and "
+                  "`build win <plain-English success>` — then `run` the agent to "
+                  "get to know the target, stand up the twin, and seal it."))
     elif sub == "use" and len(parts) > 1:
         try:
             Project.load(pdir, parts[1])
@@ -352,21 +350,23 @@ def cmd_host(cfg, args: str) -> None:
         print(dim("usage: host add <name> <ssh-string> [note] | list | rm <name>"))
 
 
-def _clone_target(cfg, twin, url: str) -> dict:
-    """Run the benign clone of a target into a twin, with live progress."""
+def _clone_target(cfg, twin, url: str, seal: bool = False) -> dict:
+    """Seed a twin from a target, with live progress. seal=False leaves it open
+    for the recon/builder agent to refine and seal."""
     from hermes.twin import clone as clone_mod
-    colors = {"exchange": green, "spec": cyan, "error": red, "done": cyan}
+    colors = {"exchange": green, "spec": cyan, "error": red, "done": cyan, "stack": cyan}
 
     def on_event(kind, text):
         print(colors.get(kind, dim)(f"  {text}"))
 
-    print(dim(f"cloning {url} into a runtime twin (read-only, on the phone)..."))
+    print(dim(f"seeding a twin from {url} (read-only, on the phone)..."))
     return clone_mod.clone(
         twin, url,
         fetch=clone_mod._httpx_fetch,
         max_exchanges=cfg.get("twin_clone_max", 200),
         delay=cfg.get("twin_clone_delay", 0.5),
         max_depth=cfg.get("twin_clone_depth", 2),
+        seal=seal,
         on_event=on_event,
     )
 
@@ -393,14 +393,26 @@ def cmd_build(cfg, args: str) -> None:
         twin.set_win_condition(rest)
         print(green("winning condition recorded."))
 
-    elif sub == "clone":  # re-clone (e.g. after changing depth/cap), or first time
+    elif sub == "clone":  # re-seed (e.g. after changing depth/cap), leaves it open
         if not twin.exists():
             print(yellow("no target yet — `project build <name> <url>` first"))
             return
         mission, win = twin.mission, twin.win_condition
         twin.init(source=twin.source, mode="url", mission=mission, win_condition=win)
-        report = _clone_target(cfg, twin, twin.source)
-        print(green(f"twin sealed — {report['exchanges']} exchange(s)."))
+        report = _clone_target(cfg, twin, twin.source, seal=False)
+        print(green(f"twin re-seeded (open) — {report['exchanges']} sample(s)."))
+
+    elif sub == "seal":  # freeze a seeded twin without the agent (quick path)
+        if not twin.exists():
+            print(yellow("no target yet — `project build <name> <url>` first"))
+            return
+        if twin.is_sealed():
+            print(dim("already sealed."))
+        elif not twin.exchanges():
+            print(red("nothing to seal — twin has no samples."))
+        else:
+            twin.seal()
+            print(green(f"twin sealed — {len(twin.exchanges())} sample(s). Build phase open."))
 
     elif sub == "clear":
         import shutil
@@ -480,7 +492,7 @@ HELP = f"""\
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
 {cyan('project')} build <name> <url>   clone a target into a runtime twin to build against
-{cyan('build')} win <text> | clone | show | clear      the twin for this project
+{cyan('build')} win <text> | clone | seal | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration
 {cyan('quit')}                  exit

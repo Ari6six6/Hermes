@@ -71,13 +71,34 @@ def build_system_prompt(project: Project, env: dict) -> str:
         "toolbox_catalog": toolbox_catalog(),
     }
     system = render(template, variables)
-    build = build_mode_block(project)
-    if build:
-        system += "\n\n" + build
+    phase = recon_build_block(project) or build_mode_block(project)
+    if phase:
+        system += "\n\n" + phase
     persona = read_persona().strip()
     if persona:
         system += "\n\n## Persona\n\n" + persona
     return system
+
+
+def recon_build_block(project: Project) -> str:
+    """When a twin exists but isn't sealed yet, this is the recon/builder phase:
+    the agent's job is to get to know the target and stand up the twin, then seal
+    it. Returns "" when there's no open twin."""
+    try:
+        twin = project.twin()
+    except Exception:
+        return ""
+    if not twin.exists() or twin.is_sealed():
+        return ""
+    manifest = twin.read_manifest()
+    stack = manifest.get("stack") or {}
+    from hermes.twin.recon import StackReport
+    stack_line = StackReport(**stack).summary() if stack else "(not fingerprinted yet)"
+    return render((PROMPTS_DIR / "recon_build.md").read_text(), {
+        "source": manifest.get("source", "(unknown)"),
+        "exchange_count": manifest.get("exchange_count", len(twin.exchanges())),
+        "stack": stack_line,
+    })
 
 
 def build_mode_block(project: Project) -> str:

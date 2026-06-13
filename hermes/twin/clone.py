@@ -104,9 +104,11 @@ def _links(base_url, status, ctype, text):
 
 def clone(model: TwinModel, base_url: str, *, seeds=None, fetch=_httpx_fetch,
           max_exchanges: int = 200, delay: float = 0.5, max_depth: int = 2,
-          include_discovery: bool = True, on_event=None) -> dict:
-    """Gather the target into `model` and seal it. `model` must be init'd and
-    open. Returns a small report. `on_event(kind, text)` is a progress hook."""
+          include_discovery: bool = True, seal: bool = True, on_event=None) -> dict:
+    """Gather the target into `model`. `model` must be init'd and open. With
+    seal=True the model is frozen at the end; with seal=False it stays open for
+    the recon/builder agent to refine and seal itself. `on_event` is a progress
+    hook."""
     def emit(kind, text):
         if on_event:
             on_event(kind, text)
@@ -179,10 +181,13 @@ def clone(model: TwinModel, base_url: str, *, seeds=None, fetch=_httpx_fetch,
     model.store_stack(stack.to_dict())
     emit("stack", stack.summary())
 
-    model.seal()
+    if seal:
+        model.seal()
     report = {"recorded": recorded, "errors": errors,
-              "exchanges": len(model.exchanges()), "stack": stack.to_dict()}
-    emit("done", f"twin sealed: {report['exchanges']} exchange(s), {errors} error(s)")
+              "exchanges": len(model.exchanges()), "stack": stack.to_dict(),
+              "sealed": seal}
+    state = "sealed" if seal else "seeded (open for the builder)"
+    emit("done", f"twin {state}: {report['exchanges']} exchange(s), {errors} error(s)")
     return report
 
 
