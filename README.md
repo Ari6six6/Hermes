@@ -88,6 +88,18 @@ with CUDA on the box, OpenAI-compatible, tool calls via the model's own chat
 template) rather than vLLM's slower experimental GGUF path. The chosen model
 persists in config and the agent is told which weights are behind it.
 
+**Per-model build.** The agent loop, package and toolset were tuned around
+Hermes, but what makes tool-calling reliable differs per model, so each row
+also carries a tuned *build profile*: its sampling (the quantized/uncensored
+builds get `min_p` + a presence penalty; thinking models keep Qwen's published
+reasoning sampler), a completion budget sized to its reasoning length, how hard
+to bounce prose-only turns (`stall_nudges`), which reasoning tags to strip, a
+short tool-call discipline note appended to its system prompt, and whether its
+runtime honours a forced `tool_choice` (vLLM does; llama.cpp under `--jinja`
+doesn't, so the loop adapts). Picking a model at `gpu serve` applies its
+profile; **Hermes's profile equals the app defaults**, so the baseline path is
+unchanged.
+
 > The GGUF paths need the CUDA *toolkit* on the box (to build llama.cpp) — rent
 > a CUDA-devel image, not a runtime-only one. And the uncensored finetunes are
 > community builds: sanity-check their tool-calling before trusting them with
