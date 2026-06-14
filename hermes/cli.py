@@ -2,7 +2,7 @@
 
   run <text>        talk to the agent (alias: r)
   project ...       new/use/list (alias: p)
-  gpu ...           attach/serve/status/tunnel/down (alias: g)
+  gpu ...           attach/serve/status/tunnel/up/down (alias: g)
   mission/notes/history/summaries/tools/config/persona/help/quit
 """
 
@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import httpx
@@ -354,6 +355,53 @@ def cmd_gpu(cfg, args: str) -> None:
         print("tunnel " + (green("up") if _probe_vllm(cfg)
                            else yellow("started (endpoint not answering yet)")))
 
+    elif sub in ("up", "resume"):
+        iid = state.get("instance_id")
+        if not iid or not cfg.get("vast_api_key"):
+            print(yellow("no paused Vast instance to resume")
+                  + dim(" — `gpu attach` to a running box instead"))
+            return
+        from hermes.gpu.vast import VastError, get_instance, start_instance
+        try:
+            start_instance(cfg.get("vast_api_key"), iid)
+        except VastError as e:
+            print(red(e))
+            return
+        print(dim(f"resuming Vast instance {iid} — waiting for it to boot..."))
+        inst = None
+        for _ in range(40):  # ~2 minutes
+            try:
+                inst = get_instance(cfg.get("vast_api_key"), iid)
+            except VastError:
+                inst = None
+            if inst and inst.get("status") == "running" and inst.get("ssh_host"):
+                break
+            time.sleep(3)
+        else:
+            print(red("instance didn't come back up in time")
+                  + dim(" — try `gpu up` again, or check the Vast console"))
+            return
+        # SSH host/port can change across a stop/start — always re-read them.
+        user, host, port = "root", inst["ssh_host"], int(inst["ssh_port"])
+        ep = SSHEndpoint(host=host, port=port, user=user)
+        print(dim(f"checking ssh {user}@{host}:{port} ..."))
+        if not ep.check():
+            print(red("ssh check failed after resume")
+                  + dim(" — the box may still be booting; try `gpu up` again shortly"))
+            return
+        ep.run(f"mkdir -p {ep.remote_workspace}")
+        isolated = probe_net_isolation(ep)
+        if state.get("tunnel_pid"):  # the old tunnel points at the pre-pause host
+            kill_pid(state["tunnel_pid"])
+        state.update({
+            "host": host, "port": port, "user": user,
+            "remote_workspace": ep.remote_workspace,
+            "net_isolation": isolated, "tunnel_pid": 0, "served_ctx": 0,
+        })
+        save_gpu_state(state)
+        print(green("resumed.") + dim(" The disk persisted, so `gpu serve` skips the "
+              "weight download / llama.cpp rebuild. Next: `gpu serve`"))
+
     elif sub == "down":
         ep = endpoint_from_state(state)
         if ep:
@@ -365,18 +413,23 @@ def cmd_gpu(cfg, args: str) -> None:
         if ep:
             ep.close_master()  # don't leave the multiplexed ssh around
         if state.get("instance_id") and cfg.get("vast_api_key"):
-            answer = input(f"stop Vast instance {state['instance_id']} (stops billing)? [y/N] ")
+            answer = input(
+                f"pause Vast instance {state['instance_id']}? stops billing but keeps "
+                "the disk, so `gpu up` resumes fast (weights + build intact) [y/N] "
+            )
             if answer.strip().lower() == "y":
                 from hermes.gpu.vast import VastError, stop_instance
                 try:
                     stop_instance(cfg.get("vast_api_key"), state["instance_id"])
-                    print(green("instance stopped."))
+                    print(green("instance paused.")
+                          + dim(" Resume later with `gpu up`. (To stop paying for the "
+                                "disk too, destroy it in the Vast console.)"))
                 except VastError as e:
                     print(red(e))
         state["served_ctx"] = 0
         save_gpu_state(state)
     else:
-        print(dim("usage: gpu attach [sshstr] | serve | status | tunnel | down"))
+        print(dim("usage: gpu attach [sshstr] | serve | status | tunnel | up | down"))
 
 
 def cmd_host(cfg, args: str) -> None:
