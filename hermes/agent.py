@@ -28,6 +28,14 @@ CODE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "remote_write"})
 # and pissed off" move — the one thing the build is built to prevent.
 BUILD_PROOF_TOOLS = frozenset({"twin_request"})
 
+# What counts as the antithesis having REALLY exercised something — running the
+# solution or querying the twin. A passive read (read_file, remote_read,
+# twin_map, ...) is not evidence: in build mode a VERDICT: PASS backed only by a
+# read is collusion theater (the critic just eyeballed the code and agreed).
+VERIFY_EVIDENCE_TOOLS = frozenset({
+    "remote_shell", "local_shell", "host_shell", "build_run", "twin_request",
+})
+
 # A fenced, multi-line code block in the final answer: ```lang\n...\n```
 CODE_FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.S)
 
@@ -277,14 +285,16 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
         backend_dead = True  # the operator wants out — no extra LLM round-trips
 
     summary = ctx.finish_summary
-    if summary is None and not backend_dead:
+    # `not summary` (not `is None`) so a finish_run whose summary stripped to ""
+    # still falls through to a real handoff instead of writing an empty one.
+    if not summary and not backend_dead:
         # Even on a cap/breaker abort the model can still write a real
         # handoff summary — far more useful to the next run than a stub.
         summary = _force_summary(
             backend, messages, registry, ctx, log,
             force=spec.supports_forced_tool_choice,
         )
-    if summary is None:
+    if not summary:
         summary = _stub_summary(prompt, tool_names_used, final_text, aborted)
 
     (run_dir / "summary.md").write_text(summary + "\n")
@@ -403,7 +413,9 @@ def _verify(backend, registry, ctx, request, files, log, max_turns,
                        "end with a line 'VERDICT: PASS' or 'VERDICT: FAIL'.")
             else:
                 out = registry.dispatch(tc.name, tc.arguments, ctx)
-                if not out.startswith(("ERROR", "DENIED")):
+                if tc.name in VERIFY_EVIDENCE_TOOLS and not out.startswith(
+                    ("ERROR", "DENIED")
+                ):
                     executed = True
                 print(dim(f"    [{label}] → ") + cyan(tc.name))
                 _echo_result(out)
