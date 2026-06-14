@@ -158,3 +158,25 @@ def test_persistent_5xx_raises(monkeypatch):
     with pytest.raises(LLMTransportError) as exc:
         backend.chat([{"role": "user", "content": "go"}])
     assert "HTTP 500" in str(exc.value)
+
+
+def test_empty_choices_raises_clean_error():
+    # A 2xx with no choices must not crash with a raw IndexError — it should
+    # surface as a clean LLMTransportError like any other backend failure.
+    def handler(request):
+        return httpx.Response(200, json={"choices": []})
+
+    backend = make_backend(handler)
+    with pytest.raises(LLMTransportError) as exc:
+        backend.chat([{"role": "user", "content": "go"}])
+    assert "unexpected response shape" in str(exc.value)
+
+
+def test_non_json_2xx_raises_clean_error():
+    def handler(request):
+        return httpx.Response(200, text="<html>gateway</html>")
+
+    backend = make_backend(handler)
+    with pytest.raises(LLMTransportError) as exc:
+        backend.chat([{"role": "user", "content": "go"}])
+    assert "unexpected response shape" in str(exc.value)
