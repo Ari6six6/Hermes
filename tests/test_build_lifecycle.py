@@ -19,7 +19,7 @@ def test_recon_to_build_full_lifecycle(project, cfg):
               mission="make /ping return pong", win_condition="GET /ping -> pong")
 
     # While OPEN the system prompt is the recon/build brief, and builder tools exist.
-    assert "stand up the twin" in package.assemble(project, "x", {}, cfg)[0]["content"]
+    assert "reconstruct the target" in package.assemble(project, "x", {}, cfg)[0]["content"]
 
     # --- Phase 1: recon/builder records a real sample and seals the twin ---
     r1 = _run(project, cfg, "build the twin", [

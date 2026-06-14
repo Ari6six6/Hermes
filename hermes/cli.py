@@ -105,8 +105,27 @@ def cmd_run(cfg, args: str) -> None:
         "remote_workspace": state.get("remote_workspace", "~/hermes-workspace"),
         "context_window": state.get("served_ctx", 0),
     }
+    prompt = args.strip()
+    # `run build` is the refinement loop: reopen the twin and run a recon/build
+    # pass that diffs the reconstruction against the live target and closes the
+    # gap. Each invocation is another pass.
+    if prompt.lower() == "build":
+        twin = project.twin()
+        if not twin.exists():
+            print(yellow("not a build project") + dim(" — `project build <name> <url>` first"))
+            return
+        if twin.is_sealed():
+            twin.unseal()
+            print(dim("reopened the twin for a refinement pass."))
+        prompt = (
+            "Refinement pass. Use twin_diff to compare the live target against the "
+            "twin as it stands, then close every divergence — reconstruct/build what "
+            "the target really runs, and record/correct samples — until twin_diff "
+            "reports all-match. Then twin_seal."
+        )
+
     backend = make_backend(cfg)
-    agent.run(project, args.strip(), cfg, backend, gpu=gpu, env=env)
+    agent.run(project, prompt, cfg, backend, gpu=gpu, env=env)
 
 
 def cmd_project(cfg, args: str) -> None:
@@ -123,16 +142,9 @@ def cmd_project(cfg, args: str) -> None:
         cfg.save()
         print(green(f"project '{parts[1]}' created and selected.") + dim(" Edit its mission: `mission edit`"))
     elif sub == "build" and len(parts) >= 3:
-        name = parts[1]
-        repo_mode = parts[2] == "repo"
-        target = parts[3] if repo_mode and len(parts) > 3 else parts[2]
-        ref = parts[4] if repo_mode and len(parts) > 4 else ""
-        if repo_mode and len(parts) < 4:
-            print(red("usage: project build <name> repo <git-url> [ref]"))
-            return
-        if not repo_mode and not target.startswith(("http://", "https://")):
-            print(red("usage: project build <name> <http(s)-url>  |  "
-                      "project build <name> repo <git-url> [ref]"))
+        name, url = parts[1], parts[2]
+        if not url.startswith(("http://", "https://")):
+            print(red("usage: project build <name> <http(s)-url>"))
             return
         try:
             project = Project.create(pdir, name)
@@ -142,21 +154,13 @@ def cmd_project(cfg, args: str) -> None:
         cfg.set("current_project", name)
         cfg.save()
         twin = project.twin()
-        if repo_mode:
-            twin.init(source=target, mode="repo", ref=ref)
-            print(green(f"build project '{name}' created — repo target {target}"
-                        + (f" @ {ref}" if ref else "") + " (open)."))
-            print(dim("recon/build phase. Set the goal — `mission edit` and "
-                      "`build win <success>` — then `run` the agent to clone, build "
-                      "and run the repo in the box, capture ground truth, and seal it."))
-        else:
-            twin.init(source=target, mode="url")
-            report = _clone_target(cfg, twin, target, seal=False)
-            print(green(f"build project '{name}' created — twin seeded with "
-                        f"{report['exchanges']} sample(s) (open)."))
-            print(dim("recon/build phase. Set the goal — `mission edit` and "
-                      "`build win <plain-English success>` — then `run` the agent to "
-                      "get to know the target, stand up the twin, and seal it."))
+        twin.init(source=url, mode="url")
+        report = _clone_target(cfg, twin, url, seal=False)
+        print(green(f"build project '{name}' created — twin seeded with "
+                    f"{report['exchanges']} sample(s) (open)."))
+        print(dim("Set the task with `mission edit`, then `run build` — the agent "
+                  "reconstructs the target and tightens the twin until it matches "
+                  "(each `run build` is another refinement pass)."))
     elif sub == "use" and len(parts) > 1:
         try:
             Project.load(pdir, parts[1])
@@ -526,7 +530,7 @@ HELP = f"""\
 {cyan('tools')}                 list the agent's tools
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
-{cyan('project')} build <name> <url> | <name> repo <git-url> [ref]   build a twin to work against
+{cyan('project')} build <name> <url>   reconstruct a target into a twin to work against
 {cyan('build')} win <text> | clone | seal | serve | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration

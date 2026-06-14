@@ -84,6 +84,56 @@ def twin_clone(args, ctx):
 
 
 @tool(
+    "twin_diff",
+    "Differential check: fetch the LIVE target for the paths the twin knows (or "
+    "paths you name) and compare to the twin's current samples. Reports where the "
+    "twin matches, where it has drifted, and where it's missing data — the gap to "
+    "close this pass. Drive it to all-match before sealing.",
+    obj_schema(
+        {"paths": {"type": "array", "items": {"type": "string"},
+                   "description": "paths to diff (default: every path the twin knows)"}},
+        [],
+    ),
+)
+def twin_diff(args, ctx):
+    from urllib.parse import urljoin
+
+    from hermes.twin import clone as clone_mod
+
+    twin = _twin(ctx)
+    if not twin.exists():
+        return "ERROR: no twin for this project."
+    given = [str(p) for p in (args.get("paths") or []) if str(p).strip()]
+    paths = given or sorted({ex.path for ex in twin.exchanges() if ex.method == "GET"})
+    if not paths:
+        return "no paths to diff yet — record or clone some samples first."
+    root = twin.source if twin.source.endswith("/") else twin.source + "/"
+    cap = ctx.cfg.get("twin_clone_max", 200)
+    matched, drifted, missing, errors = [], [], [], []
+    for path in paths[:cap]:
+        recorded = twin.respond("GET", path)
+        try:
+            status, _, text = clone_mod._httpx_fetch("GET", urljoin(root, path.lstrip("/")), None)
+        except Exception as e:
+            errors.append(f"  {path}: live fetch failed ({type(e).__name__})")
+            continue
+        if recorded is None:
+            missing.append(f"  {path}: live={status} ({len(text)}B), not in twin — record it")
+        elif recorded.status == status and (recorded.response_body or "") == (text or ""):
+            matched.append(path)
+        else:
+            drifted.append(f"  {path}: twin={recorded.status}/{len(recorded.response_body or '')}B "
+                           f"live={status}/{len(text)}B — re-record")
+    div = len(drifted) + len(missing)
+    head = (f"twin_diff: {len(matched)} match, {len(drifted)} drifted, "
+            f"{len(missing)} missing, {len(errors)} error(s). "
+            + ("ALL MATCH — the twin tracks the target." if div == 0 and not errors
+               else f"{div} divergence(s) to close."))
+    body = "\n".join(drifted + missing + errors)
+    return head + ("\n" + body if body else "")
+
+
+@tool(
     "twin_seal",
     "Seal the twin: freeze it and open the build phase. Do this ONLY once you've "
     "verified the twin behaves like the target — an inaccurate twin poisons "
@@ -104,4 +154,4 @@ def twin_seal(args, ctx):
             "is open — the next run builds the solution against this frozen twin.")
 
 
-TOOLS = [twin_record, twin_clone, twin_seal]
+TOOLS = [twin_record, twin_clone, twin_diff, twin_seal]

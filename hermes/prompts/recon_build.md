@@ -1,40 +1,38 @@
-## Recon & build — stand up the twin
+## Recon & build — reconstruct the target, refine until it matches
 
-This project targets **{{source}}**. Your job in this run is **not** to solve the
-mission yet — it is to get to know that target thoroughly and stand up a faithful
-local **twin** of it in the sandbox, so the real work later runs against an
-accurate copy. The twin is currently OPEN ({{exchange_count}} sample(s) so far);
-you finish by sealing it.
+Target: **{{source}}**. Your job this run is to stand up a faithful, *running* copy
+— a twin — of this system in the sandbox, and tighten it until it behaves like the
+live target. The twin is currently OPEN ({{exchange_count}} sample(s)); you finish
+by sealing it.
 
 What recon found so far: **{{stack}}**
 
-### Get to know the target
+This is **reconstruction, not imitation.** Observe the live target, identify its
+real stack — OS, runtime, framework/app, and versions — then pull the matching
+open-source pieces and stand up the genuine software in the box. The twin should
+*be* the system, top to bottom.
 
-Use your recon tools to their full extent — the more you understand it, the better
-the twin:
+### Each pass is a differential
 
-- **`recon_dirscan`** — map the directories and endpoints it serves.
-- **`recon_sources`** — find its own source and dependency files; a hit is a
-  shortcut straight to the real stack and code.
-- **`recon_subdomains`** — see its full footprint.
-- **`http_request`** — read any specific response you want to understand.
+- **`twin_diff`** compares the live target against the twin as it stands and tells
+  you where it matches, where it has drifted, and where it's missing data. That gap
+  is your work this pass — close it.
+- Get to know the target where you need to: **`recon_dirscan`** maps its
+  directories and endpoints, **`recon_sources`** finds its own source/dependency
+  files, **`recon_subdomains`** shows its footprint, **`http_request`** reads any
+  specific response.
+- Pull and build what you need: download on the phone (`download_file` /
+  `http_request`), move it to the box with `transfer`, build and run it with
+  `remote_shell` — read the real build output and iterate, don't assume. Capture how
+  the real target responds with **`twin_record`** / **`twin_clone`**.
 
-### Build the twin
+The goal is simple and unforgiving: **zero divergence** between the twin and the
+live target. Drive `twin_diff` to all-match.
 
-- **If it's a known open-source stack**, the highest-fidelity twin is the real
-  software: pull the matching source and runtime (download on the phone with
-  `download_file`/`http_request`, move them to the box with `transfer`), and stand
-  it up in the sandbox with `remote_shell`. A twin that *is* the software beats any
-  imitation.
-- Capture **ground-truth samples** of how the real target responds: fetch real
-  requests with `http_request` and store each with **`twin_record`**, or pull a
-  batch with **`twin_clone`**. These are what later runs prove against.
+### Prove it, then seal
 
-### Prove it, then seal it
-
-Before you seal, show the twin behaves like the target: pick real requests, get the
-target's response and the twin's response for the same input, and confirm they
-match. Quote the real outputs — don't claim parity, show it. Then **`twin_seal`**
-to freeze the twin and open the build phase. Only seal when you've actually
-verified it; an inaccurate twin poisons everything built on it. End with
-`finish_run` summarizing what the twin is and how you proved it.
+Before sealing, show real evidence the twin matches — quote `twin_diff` output, not
+a claim. Then **`twin_seal`** to freeze this pass, and `finish_run` with what the
+twin is and which divergences you closed. Each time you're run with "build" you get
+another pass to tighten it further — only seal a pass that genuinely improved the
+match.

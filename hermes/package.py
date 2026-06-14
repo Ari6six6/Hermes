@@ -91,20 +91,12 @@ def recon_build_block(project: Project) -> str:
     if not twin.exists() or twin.is_sealed():
         return ""
     manifest = twin.read_manifest()
-    exchanges = manifest.get("exchange_count", len(twin.exchanges()))
-    if manifest.get("mode") == "repo":
-        ref = manifest.get("ref", "")
-        return render((PROMPTS_DIR / "recon_build_repo.md").read_text(), {
-            "source": manifest.get("source", "(unknown)"),
-            "ref_clause": f" (pin to `{ref}`)" if ref else "",
-            "exchange_count": exchanges,
-        })
     stack = manifest.get("stack") or {}
     from hermes.twin.recon import StackReport
     stack_line = StackReport(**stack).summary() if stack else "(not fingerprinted yet)"
     return render((PROMPTS_DIR / "recon_build.md").read_text(), {
         "source": manifest.get("source", "(unknown)"),
-        "exchange_count": exchanges,
+        "exchange_count": manifest.get("exchange_count", len(twin.exchanges())),
         "stack": stack_line,
     })
 
@@ -125,7 +117,8 @@ def build_mode_block(project: Project) -> str:
         "source": manifest.get("source", "(unknown)"),
         "exchange_count": manifest.get("exchange_count", 0),
         "mission": manifest.get("mission") or "(set the mission with `mission edit`)",
-        "win_condition": manifest.get("win_condition") or "(set it with `build win <text>`)",
+        "win_condition": manifest.get("win_condition")
+        or "your solution is correct and behaves like the twin on every input you check",
     })
 
 

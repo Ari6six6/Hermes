@@ -106,7 +106,7 @@ they target observable behavior.
 | Clone engine | `hermes/twin/clone.py` | The live-touching component. Autonomous, comprehensive, read-only; injectable `fetch`. `clone()` + `expand()`. |
 | Recon | `hermes/twin/recon.py` | Stack fingerprinting + recon helpers (subdomains, exposed-source, dir-scan, robots/sitemap mining). |
 | Recon tools | `hermes/tools/recon.py` | The recon agent's eyes: `recon_subdomains` / `recon_sources` / `recon_dirscan`. Register only while the twin is OPEN. |
-| Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_seal`. Register only while the twin is OPEN. |
+| Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_diff` / `twin_seal`. Register only while the twin is OPEN. |
 | Recon/build framing | `hermes/prompts/recon_build.md` | Injected while the twin is OPEN: "get to know the target, stand up the twin, prove it, seal it." |
 | Runtime twin | `hermes/twin/server.py` | Self-contained stdlib HTTP server. Exact-replay or miss. Runs standalone on the box: `python3 server.py <model-dir> <port>`. |
 | Deploy | `hermes/twin/deploy.py` | `build serve` — pushes the server + model to the box, launches it on `localhost:<twin_port>` so the solution and its tests hit it like the real API. |
@@ -124,37 +124,52 @@ during build, and the registry + system prompt swap with it:
 | | Twin OPEN (recon/build) | Twin SEALED (build) |
 |---|---|---|
 | Role | recon / builder | thesis, then antithesis |
-| Prompt | `recon_build.md` (url) / `recon_build_repo.md` (repo) | `build_mode.md` |
-| Tools | recon (`recon_*`) + builder (`twin_record/clone/seal`) | `twin_request/map/stack/expand/reground` |
+| Prompt | `recon_build.md` | `build_mode.md` |
+| Tools | recon (`recon_*`) + builder (`twin_record/clone/diff/seal`) | `twin_request/map/stack/expand/reground` |
 | Live target | read-only, to learn & build the twin | never (only `twin_expand`/`twin_reground`, narrowly) |
 | Anti-bail gate | off | on |
 
 ## Operator flow
 
 ```
-project build shopapi https://api.example.com    # create project, seed an OPEN twin
-mission edit                                       # what to build
-build win Reimplement /products so responses match the twin
-run get to know the target and stand up the twin  # recon/builder agent -> twin_seal
-run build /products to meet the winning condition # thesis builds against the sealed twin
+project build shopapi https://shop.example.com   # create project, seed an OPEN twin
+mission edit                                       # the task (win = match the target, baked in)
+run build                                          # refinement pass: diff vs target, close the gap, seal
+build serve                                        # ensure the reconstruction is running on the box
+run build /products to meet the mission           # thesis builds against the sealed twin
 ```
 
-`project build` seeds the twin but leaves it open so the **recon/builder agent**
-stands it up and seals it (`twin_seal`). For a quick path without the agent, `build
-seal` freezes the seed as-is. Mission (what to build) and winning condition (how we
-know it's done) are two distinct, plain-English fields.
+`run build` reopens the twin and runs a recon/build pass; run it again to tighten
+the match further. `build serve` ensures the reconstruction is live on the box. The
+build's winning condition is baked in — match the target — so the operator only
+sets the mission (the task). For a quick seal without the agent, `build seal`.
 
-## Two ways to source a twin
+## One flow: observe → reconstruct → refine
 
-Both converge on the same sealed representation (recorded ground-truth samples),
-so build mode / antithesis / `build serve` are mode-agnostic — only the
-recon/build phase differs:
+There is one path, not two. You point at a live URL; recon identifies the real
+stack (OS → runtime → app + versions); the builder pulls the matching open-source
+pieces and stands up the genuine software in the box. Pulling source is *inside*
+this flow, not a separate mode.
 
-- **`url`** (`project build <name> <url>`) — a live service. The builder seeds from
-  the target's HTTP surface and records what it returns.
-- **`repo`** (`project build <name> repo <git-url> [ref]`) — a codebase. The
-  builder clones it on the phone, builds and *runs* it in the box, then records the
-  real reference's behavior. Highest fidelity: the twin *is* the real software.
+`run build` is the refinement loop, and each invocation is another pass: it reopens
+the twin and runs a recon/build pass that **`twin_diff`**s the reconstruction
+against the live target and closes the gap (match / drifted / missing), then seals.
+Divergence is the score; the goal is all-match. First pass is the expensive one
+(reconstruct from scratch); later passes only close the remaining diff.
+
+### Cost & resources (operating notes)
+
+- The reconstructed twin is ordinary userspace — **RAM/CPU/disk, never VRAM**
+  (VRAM is the model's). It doesn't compete with the model for the scarce resource.
+- `build serve` launches it with `nohup`, so it **stays alive between runs** until
+  `pkill` or the box stops — but the box itself keeps billing while up.
+- The real cost is **agent turns** (one GPU inference each), so a from-scratch
+  reconstruction is the expensive event; snapshotting the built stack so refine
+  passes resume instead of rebuild is the cost lever.
+- Context: build work is log/diff heavy; **~16k tokens is a floor, 32k
+  comfortable**. The package budget already scales to the served context and
+  truncates tool output, and the differential approach carries forward only the
+  remaining divergences rather than the whole history.
 
 ## What's next
 
