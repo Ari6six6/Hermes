@@ -61,6 +61,7 @@ def build_system_prompt(project: Project, env: dict) -> str:
     template = (PROMPTS_DIR / "system.md").read_text()
     ctx = env.get("context_window") or 0
     variables = {
+        "model_identity": env.get("model_identity", "Hermes (NousResearch Hermes-4.3-36B)"),
         "project_name": project.name,
         "project_dir": str(project.root),
         "remote_workspace": env.get("remote_workspace", "~/hermes-workspace"),
@@ -74,6 +75,11 @@ def build_system_prompt(project: Project, env: dict) -> str:
     phase = recon_build_block(project) or build_mode_block(project)
     if phase:
         system += "\n\n" + phase
+    guidance = (env.get("model_tool_guidance") or "").strip()
+    if guidance:
+        # Model-specific tool-calling discipline. Empty for the baseline model,
+        # so its system prompt is byte-for-byte what it always was.
+        system += "\n\n## Operating notes for this model\n\n" + guidance
     persona = read_persona().strip()
     if persona:
         system += "\n\n## Persona\n\n" + persona

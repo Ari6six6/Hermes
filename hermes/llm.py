@@ -60,6 +60,12 @@ class OpenAIBackend:
             max_tokens=self.cfg.get("max_completion_tokens", 8192),
             top_k=sampling.get("top_k", 20),
         )
+        # Optional, per-model knobs — only sent when a model's build profile
+        # sets them (min_p / penalties for the quantized + uncensored builds),
+        # so the baseline request body stays exactly as it was.
+        for knob in ("min_p", "presence_penalty", "frequency_penalty", "repetition_penalty"):
+            if knob in sampling:
+                body[knob] = sampling[knob]
         if tools:
             body["tools"] = tools
         if tool_choice:

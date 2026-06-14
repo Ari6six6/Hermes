@@ -16,7 +16,8 @@ DEFAULTS: dict = {
     "backend": "openai",  # "openai" (vLLM endpoint) or "mock"
     "base_url": "http://127.0.0.1:8000/v1",
     "api_key": "hermes",  # vLLM doesn't check it, but the client wants one
-    "model": "NousResearch/Hermes-4.3-36B",
+    "model_id": "hermes",  # which row of hermes.models.CATALOG to serve
+    "model": "NousResearch/Hermes-4.3-36B",  # served model name the client sends
     "quantization": "fp8",  # on-the-fly FP8; weight-only fallback on Ampere
     "vast_api_key": "",
     "projects_dir": str(Path.home() / "hermes-projects"),
@@ -43,6 +44,7 @@ DEFAULTS: dict = {
     "local_port": 8000,
     "max_completion_tokens": 8192,
     "extra_vllm_args": [],
+    "extra_llama_args": [],  # appended to llama-server for GGUF models
 }
 
 

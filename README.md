@@ -85,10 +85,47 @@ to apply the verified change back to the real machine.
 
 `config set backend mock` lets you exercise the whole loop with no GPU.
 
+## Models
+
+`gpu serve` opens a picker — Hermes isn't the only mind you can run:
+
+| # | model | runtime | notes |
+|---|---|---|---|
+| 1 | **Hermes-4.3-36B** (FP8) | vLLM | the ready, battle-tested default |
+| 2 | **Qwen3.6-27B** (Alibaba, official · FP8) | vLLM | fits a 32GB card |
+| 3 | **Qwen3.6-27B** (HauhauCS Balanced, uncensored · Q5_K_P GGUF) | llama.cpp | fits a single 24GB card |
+| 4 | **Qwen3.6-40B** (DavidAU Opus-Deckard Heretic, uncensored · Q5_K_M GGUF) | llama.cpp | ~28GB; wants 32GB+ or 2 GPUs |
+
+The catalog lives in `hermes/models.py` — each row carries everything that
+differs between models (weights, runtime, tool-call parser, VRAM floor, context
+tiers, the identity the system prompt announces), so adding a model is a row,
+not a refactor. Each model serves on its *native* runtime: FP8 safetensors
+(Hermes, official Qwen) run on vLLM; GGUF builds run on `llama-server` (built
+with CUDA on the box, OpenAI-compatible, tool calls via the model's own chat
+template) rather than vLLM's slower experimental GGUF path. The chosen model
+persists in config and the agent is told which weights are behind it.
+
+**Per-model build.** The agent loop, package and toolset were tuned around
+Hermes, but what makes tool-calling reliable differs per model, so each row
+also carries a tuned *build profile*: its sampling (the quantized/uncensored
+builds get `min_p` + a presence penalty; thinking models keep Qwen's published
+reasoning sampler), a completion budget sized to its reasoning length, how hard
+to bounce prose-only turns (`stall_nudges`), which reasoning tags to strip, a
+short tool-call discipline note appended to its system prompt, and whether its
+runtime honours a forced `tool_choice` (vLLM does; llama.cpp under `--jinja`
+doesn't, so the loop adapts). Picking a model at `gpu serve` applies its
+profile; **Hermes's profile equals the app defaults**, so the baseline path is
+unchanged.
+
+> The GGUF paths need the CUDA *toolkit* on the box (to build llama.cpp) — rent
+> a CUDA-devel image, not a runtime-only one. And the uncensored finetunes are
+> community builds: sanity-check their tool-calling before trusting them with
+> host writes.
+
 ## GPU tiers
 
-`gpu serve` reads `nvidia-smi` and adapts — quantization is FP8 everywhere,
-context length scales with total VRAM:
+`gpu serve` reads `nvidia-smi` and adapts — context length scales with total
+VRAM. Hermes (FP8 36B):
 
 | total VRAM | context | example boxes |
 |---|---|---|
@@ -98,11 +135,12 @@ context length scales with total VRAM:
 | 96–168 GB | 128–192k | H200 140GB |
 | 168+ GB | 256k | 2× RTX 6000 Pro |
 
-Override with `config set max_model_len <n>`. Architecture notes: Hopper, Ada
-and Blackwell run FP8 natively; Ampere (A100/A40/3090) falls back to
-weight-only FP8 (Marlin) — works, somewhat slower. Pre-Ampere is not
-supported. The agent is told its context size and the package budgets shrink
-automatically on small tiers.
+Qwen (Q5 GGUF, ~19GB weights) drops the floor to a single 24GB card and tiers
+its context up to 128k as VRAM allows. Override either with
+`config set max_model_len <n>`. Architecture notes: Hopper, Ada and Blackwell
+run FP8 natively; Ampere (A100/A40/3090) falls back to weight-only FP8 (Marlin)
+— works, somewhat slower. Pre-Ampere is not supported. The agent is told its
+context size and the package budgets shrink automatically on small tiers.
 
 ## What the agent can do
 

@@ -60,10 +60,17 @@ class RunResult:
     aborted: bool = False
 
 
-def strip_think(text: str | None) -> str:
+def strip_think(text: str | None, pattern: "re.Pattern" = THINK_RE) -> str:
     if not text:
         return ""
-    return THINK_RE.sub("", text).strip()
+    return pattern.sub("", text).strip()
+
+
+def _think_re(tags) -> "re.Pattern":
+    """Build the reasoning-stripper for a model's own tags. Hermes emits
+    <think>/<seed:think>; Qwen uses <think>; some finetunes add <thinking>."""
+    alt = "|".join(re.escape(t) for t in tags) or "think"
+    return re.compile(rf"<(?:{alt})>.*?</(?:{alt})>\s*", re.S)
 
 
 def _normalize(text: str) -> str:
@@ -77,6 +84,10 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
         from hermes.confirm import confirm as confirm_fn
 
     env = env or {}
+    from hermes.models import resolve as resolve_model
+
+    spec = resolve_model(cfg)
+    think_re = _think_re(spec.think_tags)
     host_records = hosts_mod.load_hosts()
     env.setdefault("managed_hosts", hosts_mod.hosts_env_line(host_records))
     run_id, run_dir = project.new_run()
@@ -130,7 +141,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     try:
         for turns in range(1, max_turns + 1):
             result: ChatResult = backend.chat(messages, tools=registry.schemas())
-            shown = strip_think(result.content)
+            shown = strip_think(result.content, think_re)
             log(
                 {
                     "role": "assistant",
@@ -228,6 +239,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     passed, report = _verify(
                         backend, registry, ctx, prompt, files_touched, log,
                         cfg.get("verify_max_turns", 6), build=twin_sealed,
+                        think_re=think_re,
                     )
                     if not passed:
                         ctx.finish_summary = None
@@ -268,7 +280,10 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     if summary is None and not backend_dead:
         # Even on a cap/breaker abort the model can still write a real
         # handoff summary — far more useful to the next run than a stub.
-        summary = _force_summary(backend, messages, registry, ctx, log)
+        summary = _force_summary(
+            backend, messages, registry, ctx, log,
+            force=spec.supports_forced_tool_choice,
+        )
     if summary is None:
         summary = _stub_summary(prompt, tool_names_used, final_text, aborted)
 
@@ -295,15 +310,17 @@ def _assistant_msg(result: ChatResult) -> dict:
     }
 
 
-def _force_summary(backend, messages, registry, ctx, log) -> str | None:
-    """The model ended without finish_run — force exactly one call."""
+def _force_summary(backend, messages, registry, ctx, log, force=True) -> str | None:
+    """The model ended without finish_run — ask for exactly one call. On vLLM
+    we pin tool_choice to finish_run; on runtimes that don't honour named
+    tool_choice (llama.cpp under --jinja) we send the nudge plain and accept a
+    finish_run if the model offers one, else fall back to a stub upstream."""
     try:
         messages = messages + [{"role": "user", "content": package.summary_nudge()}]
-        result = backend.chat(
-            messages,
-            tools=registry.schemas(),
-            tool_choice={"type": "function", "function": {"name": "finish_run"}},
-        )
+        kwargs = {"tools": registry.schemas()}
+        if force:
+            kwargs["tool_choice"] = {"type": "function", "function": {"name": "finish_run"}}
+        result = backend.chat(messages, **kwargs)
         for tc in result.tool_calls:
             if tc.name == "finish_run":
                 registry.dispatch(tc.name, tc.arguments, ctx)
@@ -332,7 +349,7 @@ def _arg(arguments: str, key: str):
 
 
 def _verify(backend, registry, ctx, request, files, log, max_turns,
-            build=False) -> tuple[bool, str]:
+            build=False, think_re=THINK_RE) -> tuple[bool, str]:
     """An independent pass: fresh context, skeptical prompt, the same real
     sandbox. It re-runs the code itself and returns (passed, report). Fails
     closed — no clear PASS verdict means FAIL.
@@ -357,7 +374,7 @@ def _verify(backend, registry, ctx, request, files, log, max_turns,
             result = backend.chat(msgs, tools=registry.schemas())
         except LLMTransportError:
             return False, f"(the {label} could not reach the backend)"
-        shown = strip_think(result.content)
+        shown = strip_think(result.content, think_re)
         log({
             "role": label,
             "content": result.content,
