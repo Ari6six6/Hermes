@@ -52,6 +52,19 @@ that pasted code but wrote/ran nothing gets bounced (`phantom_nudges`), and
 every tool's real output (exit codes included) is echoed to your phone so a
 fabricated "it passed" can't hide next to what the command actually printed.
 
+In **build mode** (a sealed twin) two more roles bracket the doer, both on by
+default and the same weights wearing different hats. A **planner** runs first
+(`plan_build_tasks`): before any code, an independent pass turns the mission and
+your request into an ordered checklist of verifiable checkpoints the builder
+executes against and the antithesis checks. And when the builder and the
+antithesis **deadlock** — the verify rounds are spent but the antithesis is still
+failing a solution the doer keeps re-finishing — a **referee** is brought in
+(`referee_on_deadlock`): fresh eyes, the real sandbox, and the authority to
+overrule either side, but a PASS that overturns the antithesis needs real
+executed evidence or the antithesis stands. So the loop is thesis → antithesis,
+with a planner up front and a referee only on conflict — never a standing
+overseer taxing every turn.
+
 ## Install (Termux)
 
 ```sh
@@ -76,7 +89,9 @@ hermes
 > run fix the parser in workspace/scraper.py and test it on the box
 > host add web ssh://root@203.0.113.7 my blog server      # optional
 > run why is nginx returning 502s on web? check the logs and config
-> gpu down                      # stop vLLM + optionally stop the instance
+> gpu down                      # stop vLLM + optionally PAUSE the box (keeps the
+>                               # disk: weights, built llama.cpp, the twin)
+> gpu up                        # later: resume the paused box (no re-download/rebuild)
 ```
 
 For risky server surgery the agent can `replicate` files from a host into

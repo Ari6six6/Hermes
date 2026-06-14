@@ -18,6 +18,7 @@ def _seal_twin(project):
 
 
 def _run(project, cfg, script):
+    cfg.set("plan_build_tasks", False)  # planner is exercised in test_planner_referee
     return agent.run(project, "build /ping", cfg, MockBackend(script),
                      gpu=SANDBOX, env={}, confirm_fn=lambda *a, **k: True)
 
