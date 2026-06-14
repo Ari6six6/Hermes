@@ -82,6 +82,42 @@ def _edit_file(path: Path) -> None:
     subprocess.run([editor, str(path)])
 
 
+def _pick_model(cfg):
+    """Let the operator choose which model to serve, defaulting to the one the
+    config already points at. Persists the choice so `run` serves the same
+    identity. Returns the chosen ModelSpec, or None if cancelled."""
+    from hermes.models import model_list, resolve
+
+    specs = model_list()
+    current = resolve(cfg)
+    default_idx = next((i for i, s in enumerate(specs) if s.key == current.key), 0)
+    print(dim("which model?"))
+    for i, s in enumerate(specs):
+        tag = green("ready") if s.ready else yellow("experimental")
+        here = cyan(" ← current") if s.key == current.key else ""
+        print(f"  {cyan(f'[{i + 1}]')} {s.label} [{tag}]{here}")
+    try:
+        raw = input(f"model [{default_idx + 1}]? ").strip()
+    except EOFError:
+        raw = ""
+    if not raw:
+        spec = specs[default_idx]
+    else:
+        try:
+            spec = specs[int(raw) - 1]
+            if int(raw) < 1:
+                raise IndexError
+        except (ValueError, IndexError):
+            print(yellow("not a listed choice — cancelled"))
+            return None
+    # The served name is what the OpenAI client (llm.py) sends; keep it in sync.
+    cfg.set("model_id", spec.key)
+    cfg.set("model", spec.served_name)
+    cfg.set("quantization", spec.quantization)
+    cfg.save()
+    return spec
+
+
 # ---------------------------------------------------------------- commands
 def cmd_run(cfg, args: str) -> None:
     if not args.strip():
@@ -100,10 +136,12 @@ def cmd_run(cfg, args: str) -> None:
             print(red("vLLM endpoint not reachable") + dim(" — `gpu attach` + `gpu serve` first "
                   "(or `config set backend mock` for a dry run)."))
             return
+    from hermes.models import resolve
     env = {
         "gpu_status": _gpu_status_line(cfg, state),
         "remote_workspace": state.get("remote_workspace", "~/hermes-workspace"),
         "context_window": state.get("served_ctx", 0),
+        "model_identity": resolve(cfg).identity,
     }
     backend = make_backend(cfg)
     agent.run(project, args.strip(), cfg, backend, gpu=gpu, env=env)
@@ -209,28 +247,36 @@ def cmd_gpu(cfg, args: str) -> None:
             state["net_isolation"] = probe_net_isolation(ep)
             save_gpu_state(state)
             ep = endpoint_from_state(state)
+        spec = _pick_model(cfg)
+        if spec is None:
+            print(yellow("cancelled"))
+            return
         try:
             gpus = provision.detect_gpus(ep)
-            plan = provision.plan_serve(gpus, cfg)
+            plan = provision.plan_serve(gpus, cfg, spec)
         except provision.ProvisionError as e:
             print(red(f"cannot serve: {e}"))
             return
+        print(f"model: {cyan(spec.label)}")
         print(f"GPUs: {cyan(', '.join(plan.gpu_names))} — {plan.total_vram_gb}GB total")
-        print(f"plan: tp={plan.tensor_parallel}, context={plan.max_model_len}, "
-              f"util={plan.gpu_memory_utilization}")
+        if spec.server == "vllm":
+            detail = f"vLLM · tp={plan.tensor_parallel}, util={plan.gpu_memory_utilization}"
+        else:
+            detail = f"llama.cpp · {plan.tensor_parallel} GPU(s)"
+        print(f"plan: {detail}, context={plan.max_model_len}")
         for note in plan.notes:
             print(yellow(f"note: {note}"))
         try:
-            provision.launch(ep, cfg, plan)
+            provision.launch(ep, cfg, plan, spec)
         except provision.ProvisionError as e:
             print(red(f"launch failed: {e}"))
             return
         _ensure_tunnel(cfg, state)
-        print(dim("waiting for the model to come up (first run downloads ~37GB)..."))
+        print(dim(f"waiting for the model to come up ({spec.weights_note})..."))
         if provision.wait_ready(ep, cfg):
             state["served_ctx"] = plan.max_model_len
             save_gpu_state(state)
-            print(green(f"ready — Hermes is listening (context {plan.max_model_len}).")
+            print(green(f"ready — {spec.label} is listening (context {plan.max_model_len}).")
                   + dim(" Try: run hello"))
         else:
             print(red("timed out.") + dim(" Inspect with: gpu status / `remote tail -n 50 ~/vllm.log`"))
