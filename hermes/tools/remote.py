@@ -16,6 +16,7 @@ import re
 import shlex
 
 from hermes.ssh import anchored_path, shell_path
+from hermes.tools._common import need_gpu
 from hermes.tools.base import obj_schema, tool
 from hermes.ui import dim
 
@@ -52,12 +53,6 @@ NETWORK_DENIED = (
 )
 
 
-def _need_gpu(ctx):
-    if ctx.gpu is None:
-        return "ERROR: no GPU box attached. Tell the operator to run `gpu attach`."
-    return None
-
-
 @tool(
     "remote_shell",
     "Run a shell command on the GPU box (Linux, root) — your workshop for running "
@@ -74,7 +69,7 @@ def _need_gpu(ctx):
     ),
 )
 def remote_shell(args, ctx):
-    err = _need_gpu(ctx)
+    err = need_gpu(ctx)
     if err:
         return err
     command = args["command"]
@@ -104,7 +99,7 @@ def remote_shell(args, ctx):
     obj_schema({"path": {"type": "string"}}, ["path"]),
 )
 def remote_read(args, ctx):
-    err = _need_gpu(ctx)
+    err = need_gpu(ctx)
     if err:
         return err
     path = anchored_path(args["path"], ctx.gpu.remote_workspace)
@@ -125,7 +120,7 @@ def remote_read(args, ctx):
     ),
 )
 def remote_write(args, ctx):
-    err = _need_gpu(ctx)
+    err = need_gpu(ctx)
     if err:
         return err
     path = anchored_path(args["path"], ctx.gpu.remote_workspace)

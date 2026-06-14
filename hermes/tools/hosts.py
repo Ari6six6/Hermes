@@ -10,19 +10,10 @@ pauses for operator y/n.
 from __future__ import annotations
 
 from hermes.ssh import shell_path
+from hermes.tools._common import host_or_error as _get
 from hermes.tools.base import obj_schema, tool
 from hermes.tools.readonly import classify
 from hermes.ui import dim
-
-
-def _get(ctx, name):
-    """Returns SSHEndpoint or an error string."""
-    ep = ctx.hosts.get(name)
-    if ep is None:
-        known = ", ".join(sorted(ctx.hosts)) or "(none)"
-        return (f"ERROR: no managed host '{name}'. Known hosts: {known}. "
-                f"The operator registers one with: host add <name> <ssh-string>")
-    return ep
 
 
 @tool(

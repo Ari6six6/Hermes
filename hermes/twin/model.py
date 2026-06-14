@@ -89,6 +89,11 @@ class TwinModel:
     def __init__(self, root: Path):
         self.root = Path(root)
 
+    @classmethod
+    def for_project(cls, project) -> "TwinModel":
+        """The twin model living under a project's `twin/` directory."""
+        return cls(project.twin_dir)
+
     # -- layout ------------------------------------------------------------
     @property
     def manifest_path(self) -> Path:

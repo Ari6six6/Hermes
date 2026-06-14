@@ -44,13 +44,14 @@ TOOL = {
 
 def run(args, ctx):
     from hermes.ssh import shell_path
+    from hermes.tools._common import host_or_error, need_gpu
 
-    if ctx.gpu is None:
-        return "ERROR: no GPU box attached. Tell the operator to run `gpu attach`."
-    ep = ctx.hosts.get(args["host"])
-    if ep is None:
-        known = ", ".join(sorted(ctx.hosts)) or "(none)"
-        return f"ERROR: no managed host '{args['host']}'. Known hosts: {known}"
+    err = need_gpu(ctx)
+    if err:
+        return err
+    ep = host_or_error(ctx, args["host"])
+    if isinstance(ep, str):
+        return ep
 
     src = args["src"].rstrip("/") or "/"
     src_q = shell_path(src)

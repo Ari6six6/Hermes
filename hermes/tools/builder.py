@@ -10,12 +10,9 @@ from __future__ import annotations
 
 import json
 
+from hermes.tools._common import twin_for as _twin
 from hermes.tools.base import obj_schema, tool
-from hermes.twin.model import Exchange, TwinModel
-
-
-def _twin(ctx) -> TwinModel:
-    return TwinModel(ctx.project.twin_dir)
+from hermes.twin.model import Exchange
 
 
 @tool(

@@ -11,12 +11,8 @@ These tools only register when a sealed twin exists for the project.
 
 from __future__ import annotations
 
+from hermes.tools._common import twin_for as _twin
 from hermes.tools.base import obj_schema, tool
-from hermes.twin.model import TwinModel
-
-
-def _twin(ctx) -> TwinModel:
-    return TwinModel(ctx.project.twin_dir)
 
 
 @tool(

@@ -8,6 +8,7 @@ down automatically when the served context window is small.
 from __future__ import annotations
 
 import time
+from functools import lru_cache
 from pathlib import Path
 
 from hermes.config import Config, read_persona
@@ -15,6 +16,15 @@ from hermes.project import Project
 
 APPROX_CHARS_PER_TOKEN = 4
 PROMPTS_DIR = Path(__file__).parent / "prompts"
+
+
+@lru_cache(maxsize=None)
+def _template(name: str) -> str:
+    """Read a prompt template once and cache it. These files are static for the
+    life of the process, yet several are read on every agent turn — caching keeps
+    that off the hot path without changing the text."""
+    return (PROMPTS_DIR / name).read_text()
+
 
 # Fraction of the total package budget given to each section.
 SECTION_SHARES = {
@@ -58,7 +68,7 @@ def package_budget_chars(cfg: Config, context_window: int) -> int:
 def build_system_prompt(project: Project, env: dict) -> str:
     from hermes.tools import toolbox_catalog
 
-    template = (PROMPTS_DIR / "system.md").read_text()
+    template = _template("system.md")
     ctx = env.get("context_window") or 0
     variables = {
         "model_identity": env.get("model_identity", "Hermes (NousResearch Hermes-4.3-36B)"),
@@ -100,7 +110,7 @@ def recon_build_block(project: Project) -> str:
     stack = manifest.get("stack") or {}
     from hermes.twin.recon import StackReport
     stack_line = StackReport(**stack).summary() if stack else "(not fingerprinted yet)"
-    return render((PROMPTS_DIR / "recon_build.md").read_text(), {
+    return render(_template("recon_build.md"), {
         "source": manifest.get("source", "(unknown)"),
         "exchange_count": manifest.get("exchange_count", len(twin.exchanges())),
         "stack": stack_line,
@@ -119,7 +129,7 @@ def build_mode_block(project: Project) -> str:
     if not twin.is_sealed():
         return ""
     manifest = twin.read_manifest()
-    return render((PROMPTS_DIR / "build_mode.md").read_text(), {
+    return render(_template("build_mode.md"), {
         "source": manifest.get("source", "(unknown)"),
         "exchange_count": manifest.get("exchange_count", 0),
         "mission": manifest.get("mission") or "(set the mission with `mission edit`)",
@@ -180,27 +190,27 @@ def assemble(project: Project, prompt: str, env: dict, cfg: Config) -> list[dict
 
 
 def summary_nudge() -> str:
-    return (PROMPTS_DIR / "summary.md").read_text().strip()
+    return _template("summary.md").strip()
 
 
 def wrapup_warning() -> str:
-    return (PROMPTS_DIR / "wrapup.md").read_text().strip()
+    return _template("wrapup.md").strip()
 
 
 def phantom_nudge() -> str:
-    return (PROMPTS_DIR / "phantom.md").read_text().strip()
+    return _template("phantom.md").strip()
 
 
 def build_proof_nudge() -> str:
-    return (PROMPTS_DIR / "build_proof.md").read_text().strip()
+    return _template("build_proof.md").strip()
 
 
 def verifier_prompt() -> str:
-    return (PROMPTS_DIR / "verifier.md").read_text().strip()
+    return _template("verifier.md").strip()
 
 
 def antithesis_prompt() -> str:
-    return (PROMPTS_DIR / "antithesis.md").read_text().strip()
+    return _template("antithesis.md").strip()
 
 
 def antithesis_request(project, request: str, files: list[str]) -> str:
@@ -250,7 +260,7 @@ def verify_failed(report: str) -> str:
 
 
 def stall_nudge(repeated: bool = False) -> str:
-    text = (PROMPTS_DIR / "stall.md").read_text().strip()
+    text = _template("stall.md").strip()
     if repeated:
         text += (
             "\n\nYou have now sent essentially the same message twice without "

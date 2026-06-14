@@ -87,3 +87,16 @@ def test_config_saved_private(cfg):
 
     cfg.save()
     assert stat.S_IMODE(config_path().stat().st_mode) == 0o600
+
+
+def test_template_cache_matches_disk_and_caches():
+    # The cached loader must return exactly what's on disk, and serve the same
+    # object on repeat calls (it's read once per process, not per agent turn).
+    from hermes.package import PROMPTS_DIR, _template
+
+    _template.cache_clear()
+    direct = (PROMPTS_DIR / "system.md").read_text()
+    first = _template("system.md")
+    assert first == direct
+    assert _template("system.md") is first  # served from cache, not re-read
+    assert _template.cache_info().hits >= 1

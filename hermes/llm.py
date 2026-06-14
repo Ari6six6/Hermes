@@ -81,7 +81,17 @@ class OpenAIBackend:
                     last_error = f"HTTP {resp.status_code}: {resp.text[:200]}"
                     continue
                 resp.raise_for_status()
-                msg = resp.json()["choices"][0]["message"]
+                try:
+                    msg = resp.json()["choices"][0]["message"]
+                except (ValueError, KeyError, IndexError, TypeError) as e:
+                    # A 2xx with a body that isn't the expected chat-completions
+                    # shape (empty `choices`, non-JSON, ...) would otherwise crash
+                    # the REPL with a raw traceback. Surface it as a clean
+                    # transport error like every other backend failure.
+                    raise LLMTransportError(
+                        f"vLLM returned an unexpected response shape "
+                        f"({type(e).__name__}). Body: {resp.text[:200]!r}"
+                    ) from e
                 calls = [
                     ToolCall(
                         tc["id"],

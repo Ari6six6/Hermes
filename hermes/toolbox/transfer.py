@@ -29,9 +29,11 @@ TOOL = {
 def run(args, ctx):
     from hermes.paths import PathDenied, resolve_in
     from hermes.ssh import anchored_path, shell_path
+    from hermes.tools._common import need_gpu
 
-    if ctx.gpu is None:
-        return "ERROR: no GPU box attached. Tell the operator to run `gpu attach`."
+    err = need_gpu(ctx)
+    if err:
+        return err
     try:
         local = resolve_in(ctx.project.root, args["local_path"])
     except PathDenied:
