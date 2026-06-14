@@ -72,6 +72,9 @@ def build_system_prompt(project: Project, env: dict) -> str:
         "toolbox_catalog": toolbox_catalog(),
     }
     system = render(template, variables)
+    phase = recon_build_block(project) or build_mode_block(project)
+    if phase:
+        system += "\n\n" + phase
     guidance = (env.get("model_tool_guidance") or "").strip()
     if guidance:
         # Model-specific tool-calling discipline. Empty for the baseline model,
@@ -81,6 +84,48 @@ def build_system_prompt(project: Project, env: dict) -> str:
     if persona:
         system += "\n\n## Persona\n\n" + persona
     return system
+
+
+def recon_build_block(project: Project) -> str:
+    """When a twin exists but isn't sealed yet, this is the recon/builder phase:
+    the agent's job is to get to know the target and stand up the twin, then seal
+    it. Returns "" when there's no open twin."""
+    try:
+        twin = project.twin()
+    except Exception:
+        return ""
+    if not twin.exists() or twin.is_sealed():
+        return ""
+    manifest = twin.read_manifest()
+    stack = manifest.get("stack") or {}
+    from hermes.twin.recon import StackReport
+    stack_line = StackReport(**stack).summary() if stack else "(not fingerprinted yet)"
+    return render((PROMPTS_DIR / "recon_build.md").read_text(), {
+        "source": manifest.get("source", "(unknown)"),
+        "exchange_count": manifest.get("exchange_count", len(twin.exchanges())),
+        "stack": stack_line,
+    })
+
+
+def build_mode_block(project: Project) -> str:
+    """When a sealed twin exists, tell the agent plainly: it is building against a
+    faithful, SAFE copy of the target — a safe execution environment — not the
+    live system. This is what unlocks it to work freely without tripping the
+    don't-touch-live-servers reflex."""
+    try:
+        twin = project.twin()
+    except Exception:
+        return ""
+    if not twin.is_sealed():
+        return ""
+    manifest = twin.read_manifest()
+    return render((PROMPTS_DIR / "build_mode.md").read_text(), {
+        "source": manifest.get("source", "(unknown)"),
+        "exchange_count": manifest.get("exchange_count", 0),
+        "mission": manifest.get("mission") or "(set the mission with `mission edit`)",
+        "win_condition": manifest.get("win_condition")
+        or "your solution is correct and behaves like the twin on every input you check",
+    })
 
 
 def assemble(project: Project, prompt: str, env: dict, cfg: Config) -> list[dict]:
@@ -140,6 +185,68 @@ def summary_nudge() -> str:
 
 def wrapup_warning() -> str:
     return (PROMPTS_DIR / "wrapup.md").read_text().strip()
+
+
+def phantom_nudge() -> str:
+    return (PROMPTS_DIR / "phantom.md").read_text().strip()
+
+
+def build_proof_nudge() -> str:
+    return (PROMPTS_DIR / "build_proof.md").read_text().strip()
+
+
+def verifier_prompt() -> str:
+    return (PROMPTS_DIR / "verifier.md").read_text().strip()
+
+
+def antithesis_prompt() -> str:
+    return (PROMPTS_DIR / "antithesis.md").read_text().strip()
+
+
+def antithesis_request(project, request: str, files: list[str]) -> str:
+    """The antithesis brief: break this solution against the twin."""
+    file_list = "\n".join(f"- {f}" for f in files) if files else "(none reported)"
+    manifest = {}
+    try:
+        manifest = project.twin().read_manifest()
+    except Exception:
+        pass
+    mission = manifest.get("mission") or request.strip()
+    win = manifest.get("win_condition") or "(no explicit winning condition set)"
+    return (
+        "A build agent was asked:\n\n"
+        f"{request.strip()}\n\n"
+        f"Mission: {mission}\n"
+        f"Winning condition: {win}\n\n"
+        "It claims to have met the winning condition, writing/changing these files:\n"
+        f"{file_list}\n\n"
+        "Break it against the twin now: run the real solution and the twin on real "
+        "inputs, compare their actual outputs, then give your VERDICT."
+    )
+
+
+def verifier_request(request: str, files: list[str]) -> str:
+    file_list = "\n".join(f"- {f}" for f in files) if files else "(none reported)"
+    return (
+        "The agent was asked:\n\n"
+        f"{request.strip()}\n\n"
+        "It claims to have finished, writing/changing these files:\n"
+        f"{file_list}\n\n"
+        "Verify it independently in the sandbox now, then give your VERDICT."
+    )
+
+
+def verify_failed(report: str) -> str:
+    return (
+        "An INDEPENDENT verification pass ran your code in the real sandbox and "
+        "it did NOT pass:\n\n"
+        f"{report.strip()}\n\n"
+        "That is ground truth from the sandbox, not an opinion, and it overrides "
+        "your own conclusion. Do not finish again until you have fixed the real "
+        "problem: read the failure, change the code (`edit_file` / `write_file`), "
+        "run the actual program yourself and read its real output, and only then "
+        "`finish_run`."
+    )
 
 
 def stall_nudge(repeated: bool = False) -> str:

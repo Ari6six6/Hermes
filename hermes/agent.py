@@ -13,10 +13,42 @@ from hermes import package
 from hermes.llm import ChatResult, LLMTransportError
 from hermes.tools import build_registry
 from hermes.tools.base import ToolContext
-from hermes.ui import cyan, dim, green, red, yellow
+from hermes.ui import cyan, dim, green, magenta, red, yellow
 
 THINK_RE = re.compile(r"<(?:seed:)?think>.*?</(?:seed:)?think>\s*", re.S)
+VERDICT_RE = re.compile(r"VERDICT:\s*(PASS|FAIL)", re.I)
 MAX_CONSECUTIVE_ERRORS = 3
+
+# Tools that put code on disk — the trigger for an independent verification
+# pass. (Running-only tasks like "check the logs" don't need code-verifying.)
+CODE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "remote_write"})
+
+# In build mode, checking your work against the twin means actually querying it.
+# Finishing a code change without ever doing this is the "told my guy it worked
+# and pissed off" move — the one thing the build is built to prevent.
+BUILD_PROOF_TOOLS = frozenset({"twin_request"})
+
+# A fenced, multi-line code block in the final answer: ```lang\n...\n```
+CODE_FENCE_RE = re.compile(r"```[^\n]*\n.*?```", re.S)
+
+# Tools that actually create a file or execute something — i.e. that leave a
+# real artifact behind. If a run produces a code block in its answer but never
+# calls one of these, the "work" happened only in prose.
+PRODUCTIVE_TOOLS = frozenset({
+    "write_file", "edit_file",
+    "remote_write", "remote_shell",
+    "host_write", "host_shell",
+    "local_shell", "forge_tool",
+    "transfer", "replicate", "download_file",
+})
+
+
+def _is_phantom_finish(tool_names_used, final_text) -> bool:
+    """True when the model is finishing with code in its answer but never
+    wrote a file or ran anything — code that lives only in the chat reply."""
+    if set(tool_names_used) & PRODUCTIVE_TOOLS:
+        return False
+    return bool(CODE_FENCE_RE.search(final_text or ""))
 
 
 @dataclass
@@ -83,6 +115,20 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
 
     max_turns = cfg.get("max_turns", 20)
     nudges_left = cfg.get("stall_nudges", 2)
+    phantom_nudges_left = cfg.get("phantom_nudges", 1)
+    # Build mode = this project has a sealed twin to prove work against.
+    try:
+        twin_sealed = project.twin().is_sealed()
+    except Exception:
+        twin_sealed = False
+    build_proof_nudges_left = cfg.get("build_proof_nudges", 1) if twin_sealed else 0
+    # Independent verification only runs when there's a real sandbox to run the
+    # code in (a GPU box) and the operator hasn't switched it off.
+    verify_rounds_left = (
+        cfg.get("verify_rounds", 2)
+        if cfg.get("verify_code_runs", True) and gpu is not None
+        else 0
+    )
     consecutive_errors = 0
     final_text = ""
     prev_shown = ""
@@ -90,6 +136,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     aborted = False
     backend_dead = False
     tool_names_used: list[str] = []
+    files_touched: list[str] = []
 
     try:
         for turns in range(1, max_turns + 1):
@@ -134,6 +181,8 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                 tool_names_used.append(tc.name)
                 output = registry.dispatch(tc.name, tc.arguments, ctx)
                 log({"role": "tool", "name": tc.name, "content": output})
+                if tc.name != "finish_run":
+                    _echo_result(output)
                 messages.append(
                     {"role": "tool", "tool_call_id": tc.id, "content": output}
                 )
@@ -141,8 +190,70 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     consecutive_errors += 1
                 else:
                     consecutive_errors = 0
+                    if tc.name in CODE_WRITE_TOOLS:
+                        path = _arg(tc.arguments, "path")
+                        if path and path not in files_touched:
+                            files_touched.append(path)
 
             if ctx.finish_summary is not None:
+                if phantom_nudges_left > 0 and _is_phantom_finish(
+                    tool_names_used, final_text
+                ):
+                    # Pasted code, wrote nothing, ran nothing — the work lives
+                    # only in the reply. Reopen the run and make it real.
+                    phantom_nudges_left -= 1
+                    ctx.finish_summary = None
+                    nudge = package.phantom_nudge()
+                    messages.append({"role": "user", "content": nudge})
+                    log({"role": "user", "content": nudge})
+                    print(yellow("  (code in the answer but nothing written or "
+                                 "run — bouncing back to actually do it)"))
+                    continue
+                if (
+                    build_proof_nudges_left > 0
+                    and (set(tool_names_used) & CODE_WRITE_TOOLS)
+                    and not (set(tool_names_used) & BUILD_PROOF_TOOLS)
+                ):
+                    # Build mode: changed code but never checked it against the
+                    # twin. That's the "tell my guy it worked and piss off" move.
+                    # Send it back to prove parity with a real query, not a claim.
+                    build_proof_nudges_left -= 1
+                    ctx.finish_summary = None
+                    nudge = package.build_proof_nudge()
+                    messages.append({"role": "user", "content": nudge})
+                    log({"role": "user", "content": nudge})
+                    print(red("  (build: code changed but never run against the "
+                              "twin — sending it back to PROVE it, not claim it)"))
+                    continue
+                if verify_rounds_left > 0 and (
+                    set(tool_names_used) & CODE_WRITE_TOOLS
+                ):
+                    # The doer doesn't get to grade its own homework. A fresh,
+                    # skeptical pass re-runs the code in the real sandbox and
+                    # returns a verdict the doer can't fake.
+                    verify_rounds_left -= 1
+                    print(magenta(
+                        "  (antithesis — breaking the solution against the twin)"
+                        if twin_sealed else
+                        "  (independent verification — re-running the code in the sandbox)"))
+                    passed, report = _verify(
+                        backend, registry, ctx, prompt, files_touched, log,
+                        cfg.get("verify_max_turns", 6), build=twin_sealed,
+                        think_re=think_re,
+                    )
+                    if not passed:
+                        ctx.finish_summary = None
+                        nudge = package.verify_failed(report)
+                        messages.append({"role": "user", "content": nudge})
+                        log({"role": "user", "content": nudge})
+                        print(red("  (antithesis BROKE it — sending it back to fix "
+                                  "the real problem)" if twin_sealed else
+                                  "  (verification FAILED — sending it back to fix "
+                                  "the real problem)"))
+                        continue
+                    print(green("  (antithesis could not break it — it holds against "
+                                "the twin)" if twin_sealed else
+                                "  (verification PASSED — the code actually runs)"))
                 break
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 print(yellow("  (circuit breaker: too many consecutive tool errors)"))
@@ -229,6 +340,100 @@ def _stub_summary(prompt, tools_used, final_text, aborted) -> str:
     )
 
 
+def _arg(arguments: str, key: str):
+    try:
+        value = json.loads(arguments or "{}").get(key)
+    except (json.JSONDecodeError, AttributeError):
+        return None
+    return value if isinstance(value, str) else None
+
+
+def _verify(backend, registry, ctx, request, files, log, max_turns,
+            build=False, think_re=THINK_RE) -> tuple[bool, str]:
+    """An independent pass: fresh context, skeptical prompt, the same real
+    sandbox. It re-runs the code itself and returns (passed, report). Fails
+    closed — no clear PASS verdict means FAIL.
+
+    In build mode it runs as the ANTITHESIS: it diffs the solution against the
+    twin, and the anti-collusion rule applies — a PASS is rejected unless the pass
+    actually executed something (no real executed evidence => FAIL), because the
+    author and the critic share the same weights."""
+    if build:
+        system = package.antithesis_prompt()
+        user = package.antithesis_request(ctx.project, request, files)
+        label = "antithesis"
+    else:
+        system = package.verifier_prompt()
+        user = package.verifier_request(request, files)
+        label = "verifier"
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
+    report = ""
+    executed = False  # did the critic actually run anything that returned real output?
+    for _ in range(max(1, max_turns)):
+        try:
+            result = backend.chat(msgs, tools=registry.schemas())
+        except LLMTransportError:
+            return False, f"(the {label} could not reach the backend)"
+        shown = strip_think(result.content, think_re)
+        log({
+            "role": label,
+            "content": result.content,
+            "tool_calls": [{"name": tc.name, "arguments": tc.arguments}
+                           for tc in result.tool_calls],
+        })
+        if shown:
+            report = shown
+            print(magenta(f"  [{label}] ") + dim(_brief(shown.splitlines()[0], 120)))
+        verdicts = VERDICT_RE.findall(shown) if shown else []
+        if verdicts:
+            passed = verdicts[-1].upper() == "PASS"
+            if build and passed and not executed:
+                # Anti-collusion: a PASS with no executed evidence is theater —
+                # the critic just agreed with its twin. Reject it as a FAIL.
+                return False, ("VERDICT PASS rejected — the antithesis never ran "
+                               "the solution or the twin, so it has no evidence the "
+                               "outputs actually match. Treating as FAIL.")
+            return passed, report
+        if not result.tool_calls:
+            break  # ended without a verdict and without acting — inconclusive
+        msgs.append(_assistant_msg(result))
+        for tc in result.tool_calls:
+            if tc.name == "finish_run":
+                out = (f"Not your tool — you are the {label}. Run the code and "
+                       "end with a line 'VERDICT: PASS' or 'VERDICT: FAIL'.")
+            else:
+                out = registry.dispatch(tc.name, tc.arguments, ctx)
+                if not out.startswith(("ERROR", "DENIED")):
+                    executed = True
+                print(dim(f"    [{label}] → ") + cyan(tc.name))
+                _echo_result(out)
+            log({"role": f"{label}-tool", "name": tc.name, "content": out})
+            msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
+    return False, report or f"(the {label} produced no verdict)"
+
+
 def _brief(arguments: str, cap: int = 100) -> str:
     text = " ".join(arguments.split())
     return text[:cap] + ("…" if len(text) > cap else "")
+
+
+def _echo_result(output: str, max_lines: int = 8, cap: int = 600) -> None:
+    """Show the operator the real tool result — exit codes, output, errors —
+    not just the model's later prose about it. Fabricated "it passed" claims
+    can't survive next to the actual output on the screen. Kept short for a
+    phone: a head of lines, capped, dim (red when the tool reported trouble)."""
+    text = (output or "").strip()
+    if not text:
+        return
+    all_lines = text.splitlines()
+    lines = all_lines[:max_lines]
+    shown = "\n".join(lines)
+    if len(shown) > cap:
+        shown = shown[:cap] + " …"
+        lines = shown.splitlines()
+    color = red if text.startswith(("ERROR", "DENIED")) else dim
+    for line in lines:
+        print(color("    " + line))
+    extra = len(all_lines) - len(lines)
+    if extra > 0:
+        print(dim(f"    … (+{extra} more line(s))"))

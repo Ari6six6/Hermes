@@ -25,11 +25,20 @@ DEFAULTS: dict = {
     "sampling": {"temperature": 0.6, "top_p": 0.95, "top_k": 20},
     "max_turns": 40,
     "stall_nudges": 2,  # bounce prose-only turns back N times before accepting them as final
+    "phantom_nudges": 1,  # bounce a finish that pasted code but wrote/ran nothing
+    "build_proof_nudges": 1,  # in build mode, bounce a finish that never checked the twin
+    "verify_code_runs": True,  # after a code task, an independent pass re-runs it in the sandbox
+    "verify_rounds": 2,  # how many times that pass may bounce a failed run back
+    "verify_max_turns": 6,  # tool-call budget inside one verification pass
     "max_tool_result_chars": 8000,
     "package_budget_tokens": 10000,  # scaled down automatically on small contexts
     "history_max_prompts": 30,
     "summaries_max": 8,
-    "allow_gpu_network": False,  # hard rule: internet goes through the phone
+    "allow_gpu_network": False,  # False: box may install/build (net), but raw egress + target traffic go via the phone; True: unrestricted box net
+    "twin_clone_max": 200,  # max requests a single benign clone makes
+    "twin_clone_delay": 0.5,  # polite seconds between live reads while cloning
+    "twin_clone_depth": 2,  # how deep the same-origin crawl follows links
+    "twin_port": 8900,  # local port the runtime twin serves on (in the sandbox)
     "max_model_len": 0,  # 0 = pick automatically from detected VRAM
     "gpu_port": 8000,
     "local_port": 8000,

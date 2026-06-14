@@ -1,11 +1,13 @@
 """Tools that execute on the rented GPU box over SSH.
 
 The GPU box is the agent's compute sandbox — shell and file ops there run
-without confirmation (commands are echoed to the screen). Internet from the
-box is a deny-list speed bump, not a cage: a root agent can route around it,
-so the deny-list is paired with an honest ask in the prompt rather than a
-false claim of impossibility. Obvious network commands are redirected to the
-phone-side web tools.
+without confirmation (commands are echoed to the screen). The box is the agent's
+workshop: installing and building software there is fine, so package managers and
+source pulls reach the network. What stays on the phone is raw egress and anything
+that talks to the target — bounced back so every such byte is visible to the
+operator. The network split is a deny-list speed bump paired with a kernel net
+namespace (when available), not a cage: a root agent can route around it, so it is
+paired with an honest ask in the prompt rather than a false claim of impossibility.
 """
 
 from __future__ import annotations
@@ -17,25 +19,36 @@ from hermes.ssh import anchored_path, shell_path
 from hermes.tools.base import obj_schema, tool
 from hermes.ui import dim
 
-NETWORK_RE = re.compile(
+# Installing/building software on the box is fine — these keep their network.
+PROVISION_RE = re.compile(
     r"(?:^|[;&|]\s*|\bsudo\s+)"
-    r"(curl|wget|aria2c|axel|ssh|scp|sftp|rsync|nc|ncat|netcat|socat|ping|"
-    r"git\s+(?:clone|pull|fetch|push|remote)|"
-    r"pip3?\s+(?:install|download)|uv\s+pip\s+install|"
-    r"apt(?:-get)?\s+(?:install|update|upgrade)|apk\s+add|yum\s+install|"
-    r"conda\s+(?:install|create)|npm\s+(?:install|i)\b|"
-    r"huggingface-cli|hf\s+download|gdown)\b"
+    r"(apt(?:-get)?\s+(?:install|update|upgrade|build-dep)|aptitude\s+install|"
+    r"dpkg\s+-i|apk\s+(?:add|update)|yum\s+(?:install|update)|dnf\s+install|"
+    r"zypper\s+(?:in|install)|pacman\s+-S|snap\s+install|"
+    r"pip3?\s+(?:install|download)|pipx\s+install|uv\s+(?:pip\s+install|add|sync)|"
+    r"poetry\s+(?:add|install)|conda\s+(?:install|create)|mamba\s+(?:install|create)|"
+    r"npm\s+(?:install|i|ci|add)|yarn\s+(?:add|install)|pnpm\s+(?:add|install|i)|"
+    r"gem\s+install|bundle\s+install|"
+    r"cargo\s+(?:install|build|fetch|add)|go\s+(?:get|install|mod|build|download)|"
+    r"composer\s+(?:install|require|update)|mvn\b|gradle\b|mix\s+deps|"
+    r"git\s+(?:clone|pull|fetch|submodule))\b"
+)
+
+# Raw egress / transfer / probe — keep these on the phone, where egress is visible.
+EGRESS_RE = re.compile(
+    r"(?:^|[;&|]\s*|\bsudo\s+)"
+    r"(curl|wget|aria2c|axel|scp|sftp|rsync|telnet|ncat|netcat|nc|socat|ping|"
+    r"ssh|gdown|huggingface-cli|hf\s+download|git\s+(?:push|remote))\b"
 )
 
 NETWORK_DENIED = (
-    "Not blocking you — asking you: please keep this off the GPU box and run "
-    "it from the phone instead. The box can technically reach the network, but "
-    "we want every byte of egress to go through the phone where the operator "
-    "can see it (it's rented from a stranger). Use http_request / web_search "
-    "for the network part. To get a file onto the box: download it on the "
-    "phone (download_file toolbox), then push it with the `transfer` toolbox "
-    "tool (equip both via equip_tool). remote_write works for small text "
-    "files only."
+    "Keep this one on the phone. Installing and building software on the box is "
+    "fine — let the package managers pull what they need — but raw downloads and "
+    "transfers (and anything that talks to the target) go through the phone, where "
+    "every byte is visible to your operator. Grab the file on the phone "
+    "(download_file / http_request), push it with the `transfer` toolbox tool, and "
+    "use http_request / web_search for reading the web. remote_write works for "
+    "small text files."
 )
 
 
@@ -47,10 +60,10 @@ def _need_gpu(ctx):
 
 @tool(
     "remote_shell",
-    "Run a shell command on the GPU box (Linux, root) — your compute sandbox "
-    "for running code, builds, and heavy work. Default cwd is the remote "
-    "workspace. Keep internet off the box: run network steps from the phone "
-    "instead (the operator wants all egress visible there).",
+    "Run a shell command on the GPU box (Linux, root) — your workshop for running "
+    "code, builds, and heavy work. Default cwd is the remote workspace. Installing "
+    "and building software here is fine (apt, pip, npm, git clone, ...). Keep raw "
+    "downloads/transfers and anything that talks to the target on the phone.",
     obj_schema(
         {
             "command": {"type": "string"},
@@ -67,11 +80,13 @@ def remote_shell(args, ctx):
     command = args["command"]
     inner = f"({command})"
     if not ctx.cfg.get("allow_gpu_network", False):
-        if NETWORK_RE.search(command):
+        is_provision = bool(PROVISION_RE.search(command))
+        if EGRESS_RE.search(command) and not is_provision:
             return NETWORK_DENIED
-        # The regex above is a fast, helpful first line; when the box supports
-        # network namespaces the command also physically loses the network.
-        if ctx.gpu.net_isolation:
+        # Provisioning keeps the network it needs; everything else loses it at
+        # the kernel level when the box supports namespaces (so target traffic
+        # and exfil stay on the phone).
+        if not is_provision and ctx.gpu.net_isolation:
             inner = f"unshare -n -- sh -c {shlex.quote(command)}"
     timeout = min(int(args.get("timeout", 120)), 1800)
     cwd = shell_path(anchored_path(args.get("cwd") or "", ctx.gpu.remote_workspace))

@@ -150,8 +150,27 @@ def cmd_run(cfg, args: str) -> None:
         "model_identity": spec.identity,
         "model_tool_guidance": spec.tool_guidance,
     }
+    prompt = args.strip()
+    # `run build` is the refinement loop: reopen the twin and run a recon/build
+    # pass that diffs the reconstruction against the live target and closes the
+    # gap. Each invocation is another pass.
+    if prompt.lower() == "build":
+        twin = project.twin()
+        if not twin.exists():
+            print(yellow("not a build project") + dim(" — `project build <name> <url>` first"))
+            return
+        if twin.is_sealed():
+            twin.unseal()
+            print(dim("reopened the twin for a refinement pass."))
+        prompt = (
+            "Refinement pass. Use twin_diff to compare the live target against the "
+            "twin as it stands, then close every divergence — reconstruct/build what "
+            "the target really runs, and record/correct samples — until twin_diff "
+            "reports all-match. Then twin_seal."
+        )
+
     backend = make_backend(cfg)
-    agent.run(project, args.strip(), cfg, backend, gpu=gpu, env=env)
+    agent.run(project, prompt, cfg, backend, gpu=gpu, env=env)
 
 
 def cmd_project(cfg, args: str) -> None:
@@ -167,6 +186,30 @@ def cmd_project(cfg, args: str) -> None:
         cfg.set("current_project", parts[1])
         cfg.save()
         print(green(f"project '{parts[1]}' created and selected.") + dim(" Edit its mission: `mission edit`"))
+    elif sub == "build" and len(parts) >= 3:
+        name, url = parts[1], parts[2]
+        if not url.startswith(("http://", "https://")):
+            print(red("usage: project build <name> <http(s)-url>"))
+            return
+        try:
+            project = Project.create(pdir, name)
+        except ProjectError as e:
+            print(red(e))
+            return
+        cfg.set("current_project", name)
+        cfg.save()
+        twin = project.twin()
+        twin.init(source=url, mode="url")
+        # The builder needs to move files phone<->box and pull FOSS on the phone;
+        # equip those up front so it isn't stuck fumbling for them.
+        for t in ("download_file", "transfer"):
+            project.equip_tool(t)
+        report = _clone_target(cfg, twin, url, seal=False)
+        print(green(f"build project '{name}' created — twin seeded with "
+                    f"{report['exchanges']} sample(s) (open)."))
+        print(dim("Set the task with `mission edit`, then `run build` — the agent "
+                  "reconstructs the target and tightens the twin until it matches "
+                  "(each `run build` is another refinement pass)."))
     elif sub == "use" and len(parts) > 1:
         try:
             Project.load(pdir, parts[1])
@@ -383,6 +426,100 @@ def cmd_host(cfg, args: str) -> None:
         print(dim("usage: host add <name> <ssh-string> [note] | list | rm <name>"))
 
 
+def _clone_target(cfg, twin, url: str, seal: bool = False) -> dict:
+    """Seed a twin from a target, with live progress. seal=False leaves it open
+    for the recon/builder agent to refine and seal."""
+    from hermes.twin import clone as clone_mod
+    colors = {"exchange": green, "spec": cyan, "error": red, "done": cyan, "stack": cyan}
+
+    def on_event(kind, text):
+        print(colors.get(kind, dim)(f"  {text}"))
+
+    print(dim(f"seeding a twin from {url} (read-only, on the phone)..."))
+    return clone_mod.clone(
+        twin, url,
+        fetch=clone_mod._httpx_fetch,
+        max_exchanges=cfg.get("twin_clone_max", 200),
+        delay=cfg.get("twin_clone_delay", 0.5),
+        max_depth=cfg.get("twin_clone_depth", 2),
+        seal=seal,
+        on_event=on_event,
+    )
+
+
+def cmd_build(cfg, args: str) -> None:
+    """The runtime twin: clone a target into a faithful, safe local copy the
+    agent builds against — never the live service."""
+    project = _current_project(cfg)
+    if project is None:
+        print(yellow("no current project") + dim(" — `project build <name> <url>` to start one"))
+        return
+    parts = args.split(maxsplit=1)
+    sub = parts[0] if parts else "show"
+    rest = parts[1].strip() if len(parts) > 1 else ""
+    twin = project.twin()
+
+    if sub == "win":
+        if not twin.exists():
+            print(yellow("no target yet — `project build <name> <url>` first"))
+            return
+        if not rest:
+            print(twin.win_condition or dim("(no winning condition set)"))
+            return
+        twin.set_win_condition(rest)
+        print(green("winning condition recorded."))
+
+    elif sub == "clone":  # re-seed (e.g. after changing depth/cap), leaves it open
+        if not twin.exists():
+            print(yellow("no target yet — `project build <name> <url>` first"))
+            return
+        mission, win = twin.mission, twin.win_condition
+        twin.init(source=twin.source, mode="url", mission=mission, win_condition=win)
+        report = _clone_target(cfg, twin, twin.source, seal=False)
+        print(green(f"twin re-seeded (open) — {report['exchanges']} sample(s)."))
+
+    elif sub == "seal":  # freeze a seeded twin without the agent (quick path)
+        if not twin.exists():
+            print(yellow("no target yet — `project build <name> <url>` first"))
+            return
+        if twin.is_sealed():
+            print(dim("already sealed."))
+        elif not twin.exchanges():
+            print(red("nothing to seal — twin has no samples."))
+        else:
+            twin.seal()
+            print(green(f"twin sealed — {len(twin.exchanges())} sample(s). Build phase open."))
+
+    elif sub == "serve":  # run the twin on the box for the solution to hit
+        if not twin.is_sealed():
+            print(yellow("twin isn't sealed yet — seal it first "
+                         "(the agent's twin_seal, or `build seal`)."))
+            return
+        state = load_gpu_state()
+        ep = endpoint_from_state(state)
+        if ep is None:
+            print(yellow("no GPU box attached — `gpu attach` first."))
+            return
+        from hermes.twin import deploy as twin_deploy
+        port = cfg.get("twin_port", 8900)
+        print(dim(f"deploying the twin to the box on localhost:{port} ..."))
+        report = twin_deploy.deploy(ep, twin, port, on_event=lambda t: print(dim("  " + t)))
+        if report["ok"]:
+            print(green(f"twin live in the sandbox: http://127.0.0.1:{port}")
+                  + dim(f"  ({report['log']})"))
+        else:
+            print(red(f"twin failed to start: {report.get('error')}"))
+
+    elif sub == "clear":
+        import shutil
+        if project.twin_dir.exists():
+            shutil.rmtree(project.twin_dir)
+        print(green("twin cleared."))
+
+    else:  # show
+        print(twin.summary())
+
+
 def cmd_config(cfg, args: str) -> None:
     args = args.strip()
     # accept both `config key value` and `config set key value` / `config get key`
@@ -450,6 +587,8 @@ HELP = f"""\
 {cyan('tools')}                 list the agent's tools
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
+{cyan('project')} build <name> <url>   reconstruct a target into a twin to work against
+{cyan('build')} win <text> | clone | seal | serve | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration
 {cyan('quit')}                  exit
@@ -475,6 +614,8 @@ def dispatch(cfg, line: str) -> bool:
         cmd_gpu(cfg, rest)
     elif cmd == "host":
         cmd_host(cfg, rest)
+    elif cmd == "build":
+        cmd_build(cfg, rest)
     elif cmd == "config":
         cmd_config(cfg, rest)
     elif cmd in ("mission", "notes", "history", "summaries"):
