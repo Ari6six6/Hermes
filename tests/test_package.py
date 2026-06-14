@@ -100,3 +100,12 @@ def test_template_cache_matches_disk_and_caches():
     assert first == direct
     assert _template("system.md") is first  # served from cache, not re-read
     assert _template.cache_info().hits >= 1
+
+
+def test_render_does_not_reexpand_substituted_values():
+    # A value that itself contains a {{...}} sequence must not bleed into a later
+    # placeholder (e.g. a project named "{{date}}"). Single-pass substitution.
+    out = package.render("{{a}} | {{b}}", {"a": "{{b}}", "b": "SECRET"})
+    assert out == "{{b}} | SECRET"
+    # unknown placeholders are left untouched
+    assert package.render("hi {{nope}}", {"x": "y"}) == "hi {{nope}}"

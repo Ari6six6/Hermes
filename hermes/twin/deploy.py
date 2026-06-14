@@ -17,6 +17,14 @@ SERVER_SRC = Path(__file__).parent / "server.py"
 REMOTE_SUBDIR = "twin-runtime"
 
 
+def _stop_cmd(port: int) -> str:
+    """pkill -f matches an unanchored regex against the whole command line, so a
+    bare `server.py . {port}` for port 890 would also kill twins on 8900-8909
+    (and the dots would match any char). Escape the dots and anchor the port at
+    the end of the argv (the server launches as `python3 server.py . <port>`)."""
+    return rf"pkill -f 'server\.py \. {int(port)}$' 2>/dev/null || true"
+
+
 def deploy(ep, model: TwinModel, port: int, on_event=None) -> dict:
     """Push the twin to the box and start it on localhost:<port>. Returns
     {"ok", "port", "remote_dir", "log"} (or {"ok": False, "error"})."""
@@ -39,7 +47,7 @@ def deploy(ep, model: TwinModel, port: int, on_event=None) -> dict:
 
     # loopback up (a fresh net namespace leaves lo down), restart any old twin.
     ep.run("ip link set lo up 2>/dev/null || true")
-    ep.run(f"pkill -f 'server.py . {port}' 2>/dev/null || true")
+    ep.run(_stop_cmd(port))
     ep.run(f"cd {rq} && nohup python3 server.py . {port} > twin.log 2>&1 < /dev/null & echo $!")
     emit(f"launched on :{port}")
 
@@ -52,4 +60,4 @@ def deploy(ep, model: TwinModel, port: int, on_event=None) -> dict:
 
 
 def stop(ep, port: int) -> None:
-    ep.run(f"pkill -f 'server.py . {port}' 2>/dev/null || true")
+    ep.run(_stop_cmd(port))

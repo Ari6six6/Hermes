@@ -80,6 +80,29 @@ def test_antithesis_breaks_divergent_solution_then_doer_fixes(project, cfg):
     assert "did NOT pass" in transcript  # the FAIL was fed back to the doer
 
 
+def test_antithesis_pass_after_only_a_read_is_rejected(project, cfg):
+    # A passive read is not executed evidence: the critic must run the solution
+    # or query the twin. A VERDICT: PASS after only read_file is collusion
+    # theater and must be rejected, exactly like a no-tool text PASS.
+    _seal_twin(project)
+    result = _run(project, cfg, [
+        {"tool": "write_file", "args": {"path": "workspace/app.py", "content": "print('pong')"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"tool": "finish_run", "args": {"summary": "trust me"}},
+        # antithesis only READS the solution, runs/queries nothing, then rules PASS
+        {"tool": "read_file", "args": {"path": "workspace/app.py"}},
+        {"text": "I read it, looks right. VERDICT: PASS"},
+        # bounced; doer re-finishes and this time the antithesis really queries
+        {"tool": "finish_run", "args": {"summary": "verified for real"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"text": "ran it: pong, twin: pong. VERDICT: PASS"},
+    ])
+    assert not result.aborted
+    assert result.summary == "verified for real"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "VERDICT PASS rejected" in transcript  # the collusion guard fired
+
+
 def test_non_build_verify_still_passes_on_text_verdict(project, cfg):
     # Outside build mode (no sealed twin), the anti-collusion evidence rule does
     # NOT apply — keep the existing verifier behavior (a text PASS is accepted).

@@ -7,6 +7,7 @@ down automatically when the served context window is small.
 
 from __future__ import annotations
 
+import re
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -37,11 +38,18 @@ SECTION_SHARES = {
 }
 
 
+_PLACEHOLDER_RE = re.compile(r"\{\{(\w+)\}\}")
+
+
 def render(template: str, variables: dict) -> str:
-    out = template
-    for key, value in variables.items():
-        out = out.replace("{{" + key + "}}", str(value))
-    return out
+    """Substitute {{key}} placeholders in a single pass. Substituted values are
+    NOT rescanned, so a value that itself contains a {{...}} sequence (e.g. a
+    project named "{{date}}") can't bleed into a later placeholder. Unknown
+    placeholders are left untouched."""
+    return _PLACEHOLDER_RE.sub(
+        lambda m: str(variables[m.group(1)]) if m.group(1) in variables else m.group(0),
+        template,
+    )
 
 
 def truncate_keep_tail(text: str, max_chars: int) -> str:

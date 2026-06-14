@@ -459,3 +459,20 @@ def test_think_blocks_stripped():
     assert agent.strip_think("<think>secret</think>answer") == "answer"
     assert agent.strip_think("<seed:think>x</seed:think>ok") == "ok"
     assert agent.strip_think(None) == ""
+
+
+def test_empty_finish_summary_falls_back_to_real_handoff(project, cfg):
+    # finish_run with a whitespace-only summary used to slip past the
+    # never-lose-the-handoff fallback (it guarded on `is None`, but the summary
+    # stripped to ""). The run should still produce a non-empty summary.
+    result = run_agent(
+        project,
+        cfg,
+        [
+            {"tool": "write_file",
+             "args": {"path": "workspace/out.txt", "content": "hi"}},
+            {"tool": "finish_run", "args": {"summary": "   \n\t "}},
+        ],
+    )
+    assert result.summary.strip() != ""
+    assert (project.runs_dir / "0001" / "summary.md").read_text().strip() != ""

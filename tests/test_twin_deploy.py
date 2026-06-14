@@ -44,3 +44,14 @@ def test_deploy_fails_closed_on_push_error(project):
     report = deploy.deploy(ep, twin, 8900)
     assert not report["ok"]
     assert "server.py" in report["error"]
+
+
+def test_stop_anchors_exact_port_no_prefix_collision():
+    # pkill -f matches an unanchored regex; stopping :890 must not also match the
+    # argv of a twin on :8900-:8909. The pattern escapes the dots and anchors
+    # the port at end-of-line.
+    ep = FakeEndpoint()
+    deploy.stop(ep, 890)
+    cmd = ep.calls[-1]
+    assert r"server\.py \. 890$" in cmd          # escaped + anchored
+    assert "'server.py . 890'" not in cmd        # not the old loose pattern
