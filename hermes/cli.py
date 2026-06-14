@@ -155,6 +155,10 @@ def cmd_project(cfg, args: str) -> None:
         cfg.save()
         twin = project.twin()
         twin.init(source=url, mode="url")
+        # The builder needs to move files phone<->box and pull FOSS on the phone;
+        # equip those up front so it isn't stuck fumbling for them.
+        for t in ("download_file", "transfer"):
+            project.equip_tool(t)
         report = _clone_target(cfg, twin, url, seal=False)
         print(green(f"build project '{name}' created — twin seeded with "
                     f"{report['exchanges']} sample(s) (open)."))
