@@ -35,14 +35,15 @@ class ModelSpec:
     server: str = "vllm"  # runtime: "vllm" (FP8 safetensors) or "llama_cpp" (GGUF)
     quantization: str = "fp8"
     tool_call_parser: str = "hermes"
-    gguf_file: str | None = None  # filename within `repo` when the model is GGUF
+    gguf_file: str | None = None  # exact filename within `repo` (GGUF)
+    gguf_quant: str | None = None  # or a quant tag llama.cpp resolves (repo:QUANT)
     tokenizer: str | None = None  # override tokenizer source (GGUF sometimes needs it)
     ready: bool = True
     notes_extra: list = field(default_factory=list)  # extra serve-time warnings
 
     @property
     def is_gguf(self) -> bool:
-        return self.gguf_file is not None
+        return self.gguf_file is not None or self.gguf_quant is not None
 
 
 # Hermes 4.3 supports up to 512K; FP8 36B weights are ~37GB, so 44GB is the floor.
@@ -105,8 +106,73 @@ QWEN = ModelSpec(
     ],
 )
 
+# Qwen3.6-27B, Alibaba's official release: FP8 safetensors on vLLM, like Hermes.
+# A 27B in FP8 is ~27GB, so it fits a 32GB card. Qwen3 emits Hermes-style tool
+# calls, so vLLM's `hermes` parser is the reliable choice.
+QWEN_OFFICIAL = ModelSpec(
+    key="qwen-official",
+    label="Qwen3.6-27B (Alibaba, official) · FP8",
+    repo="Qwen/Qwen3.6-27B",
+    identity="Qwen3.6-27B (Alibaba's official release), running as the mind of the Hermes agent system",
+    min_total_gb=30,
+    max_model_len=262144,
+    context_tiers=[
+        (40, 32768),
+        (56, 65536),
+        (80, 131072),
+        (140, 196608),
+    ],
+    context_beyond=262144,
+    weights_note="first run downloads ~27GB and quantizes to FP8 on the fly",
+    served_name="qwen3.6-27b-official",
+    server="vllm",
+    quantization="fp8",
+    tool_call_parser="hermes",
+    ready=False,
+)
+
+# DavidAU's Qwen3.6-40B "MAX" GGUF (Claude-Opus-flavoured, uncensored, thinking).
+# A 40B at Q5_K_M is ~28GB, so it wants a 32GB+ card or two GPUs. The repo holds
+# many quant files, so we let llama.cpp resolve the file by quant tag
+# (`-hf repo:Q5_K_M`); override `gguf_quant`/`gguf_file` via config to change it.
+QWEN_40B = ModelSpec(
+    key="qwen-40b",
+    label="Qwen3.6-40B (DavidAU, Opus-Deckard Heretic, uncensored) · Q5_K_M GGUF",
+    repo="DavidAU/Qwen3.6-40B-Claude-4.6-Opus-Deckard-Heretic-Uncensored-Thinking-NEO-CODE-Di-IMatrix-MAX-GGUF",
+    identity=(
+        "Qwen3.6-40B (DavidAU's Opus-Deckard Heretic uncensored finetune), "
+        "running as the mind of the Hermes agent system"
+    ),
+    min_total_gb=30,
+    max_model_len=131072,
+    context_tiers=[
+        (36, 16384),
+        (48, 32768),
+        (72, 65536),
+        (120, 98304),
+    ],
+    context_beyond=131072,
+    weights_note="first run downloads the ~28GB Q5_K_M GGUF",
+    served_name="qwen3.6-40b",
+    server="llama_cpp",
+    quantization="gguf",
+    gguf_quant="Q5_K_M",
+    ready=False,
+    notes_extra=[
+        "First serve builds llama.cpp with CUDA on the box (needs the CUDA "
+        "toolkit / nvcc — use a CUDA-devel image, not runtime-only).",
+        "Large community uncensored finetune — sanity-check its tool-calling "
+        "discipline before trusting it with host writes.",
+    ],
+)
+
 # Order is the picker order; HERMES first as the ready default.
-CATALOG: dict[str, ModelSpec] = {HERMES.key: HERMES, QWEN.key: QWEN}
+CATALOG: dict[str, ModelSpec] = {
+    HERMES.key: HERMES,
+    QWEN_OFFICIAL.key: QWEN_OFFICIAL,
+    QWEN.key: QWEN,
+    QWEN_40B.key: QWEN_40B,
+}
 DEFAULT_KEY = HERMES.key
 
 

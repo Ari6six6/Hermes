@@ -145,10 +145,15 @@ def llama_command(cfg, plan: ServePlan, spec: ModelSpec | None = None) -> str:
     HF, offloads every layer to the GPU(s), and serves OpenAI tool calls from
     the model's own chat template (`--jinja`)."""
     spec = spec or resolve(cfg)
+    # Exact filename when we have one; otherwise let llama.cpp resolve the file
+    # from the repo by quant tag (`-hf user/repo:Q5_K_M`).
+    if spec.gguf_file:
+        weights = [f"--hf-repo {spec.repo}", f"--hf-file {spec.gguf_file}"]
+    else:
+        weights = [f"-hf {spec.repo}:{spec.gguf_quant}"]
     parts = [
         LLAMA_BIN,
-        f"--hf-repo {spec.repo}",
-        f"--hf-file {spec.gguf_file}",
+        *weights,
         f"--alias {spec.served_name}",
         "--host 127.0.0.1",
         f"--port {cfg.get('gpu_port', 8000)}",

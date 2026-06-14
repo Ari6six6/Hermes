@@ -75,20 +75,23 @@ to apply the verified change back to the real machine.
 | # | model | runtime | notes |
 |---|---|---|---|
 | 1 | **Hermes-4.3-36B** (FP8) | vLLM | the ready, battle-tested default |
-| 2 | **Qwen3.6-27B** (HauhauCS Balanced, uncensored · Q5_K_P GGUF) | llama.cpp | experimental wiring; fits a single 24GB card |
+| 2 | **Qwen3.6-27B** (Alibaba, official · FP8) | vLLM | fits a 32GB card |
+| 3 | **Qwen3.6-27B** (HauhauCS Balanced, uncensored · Q5_K_P GGUF) | llama.cpp | fits a single 24GB card |
+| 4 | **Qwen3.6-40B** (DavidAU Opus-Deckard Heretic, uncensored · Q5_K_M GGUF) | llama.cpp | ~28GB; wants 32GB+ or 2 GPUs |
 
 The catalog lives in `hermes/models.py` — each row carries everything that
 differs between models (weights, runtime, tool-call parser, VRAM floor, context
 tiers, the identity the system prompt announces), so adding a model is a row,
-not a refactor. GGUF models serve on their *native* runtime: Hermes runs FP8
-safetensors on vLLM; Qwen's Q5 GGUF runs on `llama-server` (built with CUDA on
-the box, OpenAI-compatible, tool calls via the model's own chat template), not
-vLLM's slower experimental GGUF path. The chosen model persists in config and
-the agent is told which weights are behind it.
+not a refactor. Each model serves on its *native* runtime: FP8 safetensors
+(Hermes, official Qwen) run on vLLM; GGUF builds run on `llama-server` (built
+with CUDA on the box, OpenAI-compatible, tool calls via the model's own chat
+template) rather than vLLM's slower experimental GGUF path. The chosen model
+persists in config and the agent is told which weights are behind it.
 
-> The Qwen path needs the CUDA *toolkit* on the box (to build llama.cpp) — rent
-> a CUDA-devel image, not a runtime-only one. And it's a community uncensored
-> finetune: sanity-check its tool-calling before trusting it with host writes.
+> The GGUF paths need the CUDA *toolkit* on the box (to build llama.cpp) — rent
+> a CUDA-devel image, not a runtime-only one. And the uncensored finetunes are
+> community builds: sanity-check their tool-calling before trusting them with
+> host writes.
 
 ## GPU tiers
 

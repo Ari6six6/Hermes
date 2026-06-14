@@ -154,6 +154,43 @@ def test_launch_llama_builds_with_cuda_then_serves(cfg):
     assert "--jinja" in ep.calls[3]
 
 
+def test_qwen_official_serves_fp8_on_vllm(cfg):
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen-official")
+    assert spec.server == "vllm"  # official safetensors → vLLM, not llama.cpp
+    plan = plan_serve([("NVIDIA H200", 143771)], cfg, spec)
+    cmd = vllm_command(cfg, plan, spec)
+    assert "Qwen/Qwen3.6-27B" in cmd
+    assert "--quantization fp8" in cmd
+    assert "--served-model-name qwen3.6-27b-official" in cmd
+    assert "--tool-call-parser hermes" in cmd
+
+
+def test_qwen_official_fits_32gb_card(cfg):
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen-official")
+    # 32GB card reports ~31GB — above the 27B FP8 floor, below Hermes' 44.
+    plan = plan_serve([("RTX 5090", 32760)], cfg, spec)
+    assert plan.max_model_len == 32768
+
+
+def test_qwen_40b_resolves_gguf_by_quant_tag(cfg):
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen-40b")
+    assert spec.server == "llama_cpp"
+    plan = plan_serve([("RTX 6000 Pro", 49140)], cfg, spec)
+    cmd = llama_command(cfg, plan, spec)
+    # No exact filename for this repo — llama.cpp resolves it from the quant tag.
+    assert "-hf DavidAU/Qwen3.6-40B-Claude-4.6-Opus-Deckard-Heretic-" in cmd
+    assert ":Q5_K_M" in cmd
+    assert "--hf-file" not in cmd
+    assert "--alias qwen3.6-40b" in cmd
+    assert "--jinja" in cmd
+
+
 def test_parse_ssh_strings():
     assert parse_ssh_string("ssh -p 12345 root@ssh4.vast.ai -L 8080:localhost:8080") == \
         ("root", "ssh4.vast.ai", 12345)
