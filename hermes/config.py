@@ -33,7 +33,7 @@ DEFAULTS: dict = {
     "package_budget_tokens": 10000,  # scaled down automatically on small contexts
     "history_max_prompts": 30,
     "summaries_max": 8,
-    "allow_gpu_network": False,  # hard rule: internet goes through the phone
+    "allow_gpu_network": False,  # False: box may install/build (net), but raw egress + target traffic go via the phone; True: unrestricted box net
     "twin_clone_max": 200,  # max requests a single benign clone makes
     "twin_clone_delay": 0.5,  # polite seconds between live reads while cloning
     "twin_clone_depth": 2,  # how deep the same-origin crawl follows links

@@ -168,12 +168,14 @@ Divergence is the score; the goal is all-match. First pass is the expensive one
   `build_run` captures each working reconstruction step into `twin/recipe.jsonl`,
   so a later pass or a fresh box replays the recipe (`build_recipe`) instead of the
   agent re-deriving the build — the expensive derivation is paid once.
-  - Open question that governs full reconstruction: installing the stack on the box
-    (`apt`, etc.) needs network, which the no-box-network rule currently bounces to
-    the phone. The clean resolution is phase-scoped — allow box network *only*
-    while the twin is OPEN (reconstruction), keep it off once SEALED — but that
-    reverses an explicit rule, so it's a deliberate operator decision, not a silent
-    flip.
+  - Network policy (settled): the box **may install and build software** (`apt`,
+    `pip`, `npm`, `git clone`, …) — those keep their network so reconstruction
+    works. **Raw egress and anything that talks to the target** (`curl`, `wget`,
+    `scp`, `rsync`, …) is bounced to the phone, where egress stays visible, and
+    every other command loses the network at the kernel level (`unshare -n`) on
+    boxes that support it. Recon is unaffected — those tools are phone-side — so
+    "all recon through the phone" holds automatically. `allow_gpu_network=True`
+    lifts the split entirely.
 - Context: build work is log/diff heavy; **~16k tokens is a floor, 32k
   comfortable**. The package budget already scales to the served context and
   truncates tool output, and the differential approach carries forward only the

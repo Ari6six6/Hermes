@@ -44,12 +44,22 @@ def test_build_run_does_not_record_failure(project, cfg):
     assert project.twin().recipe() == []
 
 
-def test_build_run_does_not_record_blocked_network_step(project, cfg):
-    # A network command is bounced by remote_shell to the phone, never run on the
-    # box — so it is not captured as a working step.
+def test_build_run_records_provisioning_install(project, cfg):
+    # Installing software on the box is allowed now, so a successful apt install
+    # runs and is captured into the recipe.
+    _open_twin(project)
+    gpu = FakeEndpoint(responses=[(0, "nginx is the newest version", "")])
+    out = build_run.fn({"command": "apt-get install -y nginx", "note": "web server"},
+                       _ctx(project, cfg, gpu))
+    assert "recorded to recipe" in out
+    assert project.twin().recipe()[0]["cmd"] == "apt-get install -y nginx"
+
+
+def test_build_run_does_not_record_bounced_egress(project, cfg):
+    # A raw download is bounced to the phone, never run on the box — not captured.
     _open_twin(project)
     gpu = FakeEndpoint(responses=[(0, "should not be reached", "")])
-    out = build_run.fn({"command": "apt-get install -y nginx"}, _ctx(project, cfg, gpu))
+    out = build_run.fn({"command": "curl -O https://x/y.tgz"}, _ctx(project, cfg, gpu))
     assert "not recorded" in out
     assert project.twin().recipe() == []
 
