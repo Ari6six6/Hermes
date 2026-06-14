@@ -109,10 +109,12 @@ they target observable behavior.
 | Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_seal`. Register only while the twin is OPEN. |
 | Recon/build framing | `hermes/prompts/recon_build.md` | Injected while the twin is OPEN: "get to know the target, stand up the twin, prove it, seal it." |
 | Runtime twin | `hermes/twin/server.py` | Self-contained stdlib HTTP server. Exact-replay or miss. Runs standalone on the box: `python3 server.py <model-dir> <port>`. |
+| Deploy | `hermes/twin/deploy.py` | `build serve` — pushes the server + model to the box, launches it on `localhost:<twin_port>` so the solution and its tests hit it like the real API. |
+| Antithesis | `hermes/prompts/antithesis.md` + `agent._verify(build=True)` | Diffs the solution against the twin; anti-collusion — a PASS with no executed evidence is rejected as FAIL. |
 | Build tools | `hermes/tools/twin.py` | `twin_request` / `twin_map` / `twin_stack` / `twin_expand` / `twin_reground`. Register only when a sealed twin exists. |
 | Build framing | `hermes/prompts/build_mode.md` | Injected once sealed: "build against the safe twin; show, don't claim; here's the mission + winning condition." |
 | Anti-bail gate | `hermes/agent.py` + `prompts/build_proof.md` | Bounces a build-mode finish that changed code but never queried the twin. |
-| CLI | `hermes/cli.py` | `project build <name> <url>`; `build win|clone|seal|show|clear`. |
+| CLI | `hermes/cli.py` | `project build <name> <url>`; `build win|clone|seal|serve|show|clear`. |
 
 ## The phases, and the seal between them
 
@@ -144,11 +146,11 @@ know it's done) are two distinct, plain-English fields.
 
 ## What's next
 
-1. **`build serve`**: deploy the standalone twin to the GPU box on
-   `localhost:<twin_port>` so the solution and its tests hit it like the real API.
-2. **The dialectic build loop**: thesis builds against the twin; antithesis diffs
-   the solution against it, with the anti-collusion rule — a STANDS verdict is
-   invalid without a real executed command + its actual output. Extends the
-   independent-verifier pass in `hermes/agent.py`. "Winning" = the proof harness
-   genuinely passes.
-3. **`repo` mode**: clone + build + run a reference codebase to produce the twin.
+1. **`repo` mode**: clone + build + run a reference codebase to produce the twin
+   (the other source of truth besides a live URL).
+2. **End-to-end shakeout** on a real target + box: drive recon → seal → `build
+   serve` → thesis/antithesis once against an actual service, and tune the prompts
+   from what the 36B model actually does.
+3. **Builder-side proof gate**: today `twin_seal` requires samples + a strong
+   prompt; a harder gate could require the builder to show a real
+   target-vs-twin match before it's allowed to seal.

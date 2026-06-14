@@ -414,6 +414,26 @@ def cmd_build(cfg, args: str) -> None:
             twin.seal()
             print(green(f"twin sealed — {len(twin.exchanges())} sample(s). Build phase open."))
 
+    elif sub == "serve":  # run the twin on the box for the solution to hit
+        if not twin.is_sealed():
+            print(yellow("twin isn't sealed yet — seal it first "
+                         "(the agent's twin_seal, or `build seal`)."))
+            return
+        state = load_gpu_state()
+        ep = endpoint_from_state(state)
+        if ep is None:
+            print(yellow("no GPU box attached — `gpu attach` first."))
+            return
+        from hermes.twin import deploy as twin_deploy
+        port = cfg.get("twin_port", 8900)
+        print(dim(f"deploying the twin to the box on localhost:{port} ..."))
+        report = twin_deploy.deploy(ep, twin, port, on_event=lambda t: print(dim("  " + t)))
+        if report["ok"]:
+            print(green(f"twin live in the sandbox: http://127.0.0.1:{port}")
+                  + dim(f"  ({report['log']})"))
+        else:
+            print(red(f"twin failed to start: {report.get('error')}"))
+
     elif sub == "clear":
         import shutil
         if project.twin_dir.exists():
@@ -492,7 +512,7 @@ HELP = f"""\
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
 {cyan('project')} build <name> <url>   clone a target into a runtime twin to build against
-{cyan('build')} win <text> | clone | seal | show | clear   the twin for this project
+{cyan('build')} win <text> | clone | seal | serve | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration
 {cyan('quit')}                  exit
