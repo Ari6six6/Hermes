@@ -61,6 +61,7 @@ def build_system_prompt(project: Project, env: dict) -> str:
     template = (PROMPTS_DIR / "system.md").read_text()
     ctx = env.get("context_window") or 0
     variables = {
+        "model_identity": env.get("model_identity", "Hermes (NousResearch Hermes-4.3-36B)"),
         "project_name": project.name,
         "project_dir": str(project.root),
         "remote_workspace": env.get("remote_workspace", "~/hermes-workspace"),

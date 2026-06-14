@@ -68,10 +68,32 @@ to apply the verified change back to the real machine.
 
 `config set backend mock` lets you exercise the whole loop with no GPU.
 
+## Models
+
+`gpu serve` opens a picker — Hermes isn't the only mind you can run:
+
+| # | model | runtime | notes |
+|---|---|---|---|
+| 1 | **Hermes-4.3-36B** (FP8) | vLLM | the ready, battle-tested default |
+| 2 | **Qwen3.6-27B** (HauhauCS Balanced, uncensored · Q5_K_P GGUF) | llama.cpp | experimental wiring; fits a single 24GB card |
+
+The catalog lives in `hermes/models.py` — each row carries everything that
+differs between models (weights, runtime, tool-call parser, VRAM floor, context
+tiers, the identity the system prompt announces), so adding a model is a row,
+not a refactor. GGUF models serve on their *native* runtime: Hermes runs FP8
+safetensors on vLLM; Qwen's Q5 GGUF runs on `llama-server` (built with CUDA on
+the box, OpenAI-compatible, tool calls via the model's own chat template), not
+vLLM's slower experimental GGUF path. The chosen model persists in config and
+the agent is told which weights are behind it.
+
+> The Qwen path needs the CUDA *toolkit* on the box (to build llama.cpp) — rent
+> a CUDA-devel image, not a runtime-only one. And it's a community uncensored
+> finetune: sanity-check its tool-calling before trusting it with host writes.
+
 ## GPU tiers
 
-`gpu serve` reads `nvidia-smi` and adapts — quantization is FP8 everywhere,
-context length scales with total VRAM:
+`gpu serve` reads `nvidia-smi` and adapts — context length scales with total
+VRAM. Hermes (FP8 36B):
 
 | total VRAM | context | example boxes |
 |---|---|---|
@@ -81,11 +103,12 @@ context length scales with total VRAM:
 | 96–168 GB | 128–192k | H200 140GB |
 | 168+ GB | 256k | 2× RTX 6000 Pro |
 
-Override with `config set max_model_len <n>`. Architecture notes: Hopper, Ada
-and Blackwell run FP8 natively; Ampere (A100/A40/3090) falls back to
-weight-only FP8 (Marlin) — works, somewhat slower. Pre-Ampere is not
-supported. The agent is told its context size and the package budgets shrink
-automatically on small tiers.
+Qwen (Q5 GGUF, ~19GB weights) drops the floor to a single 24GB card and tiers
+its context up to 128k as VRAM allows. Override either with
+`config set max_model_len <n>`. Architecture notes: Hopper, Ada and Blackwell
+run FP8 natively; Ampere (A100/A40/3090) falls back to weight-only FP8 (Marlin)
+— works, somewhat slower. Pre-Ampere is not supported. The agent is told its
+context size and the package budgets shrink automatically on small tiers.
 
 ## What the agent can do
 

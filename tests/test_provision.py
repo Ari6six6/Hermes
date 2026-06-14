@@ -1,11 +1,13 @@
 import pytest
 
 from hermes.gpu.provision import (
+    LLAMA_BIN,
     MODEL_MAX_LEN,
     VENV_DIR,
     VLLM_BIN,
     ProvisionError,
     launch,
+    llama_command,
     plan_serve,
     vllm_command,
 )
@@ -105,6 +107,51 @@ def test_launch_raises_on_install_failure(cfg):
     ])
     with pytest.raises(ProvisionError, match="vLLM install failed"):
         launch(ep, cfg, plan_serve([("NVIDIA H200", 143771)], cfg))
+
+
+def test_qwen_fits_smaller_box(cfg):
+    # 24GB card is below Hermes' 44GB floor but enough for the Q5 GGUF.
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen")
+    plan = plan_serve([("RTX 4090", 24564)], cfg, spec)
+    assert plan.max_model_len == 16384
+
+
+def test_qwen_serves_on_native_llama_cpp(cfg):
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen")
+    assert spec.server == "llama_cpp"  # native GGUF runtime, not vLLM
+    plan = plan_serve([("RTX 4090", 24564)], cfg, spec)
+    cmd = llama_command(cfg, plan, spec)
+    assert cmd.startswith(f"{LLAMA_BIN} ")
+    assert "--hf-repo HauhauCS/Qwen3.6-27B-Uncensored-HauhauCS-Balanced" in cmd
+    assert f"--hf-file {spec.gguf_file}" in cmd
+    assert "--jinja" in cmd  # OpenAI tool calls from the model's own chat template
+    assert "--alias qwen3.6-27b" in cmd
+    assert "--n-gpu-layers" in cmd
+
+
+def test_launch_llama_builds_with_cuda_then_serves(cfg):
+    from conftest import FakeEndpoint
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen")
+    ep = FakeEndpoint([
+        (0, "", ""),  # not running
+        (0, "", ""),  # build llama.cpp
+        (0, "", ""),  # mkdir workspace
+        (0, "", ""),  # launch
+    ])
+    launch(ep, cfg, plan_serve([("RTX 4090", 24564)], cfg, spec), spec)
+
+    build = ep.calls[1]
+    assert "llama.cpp" in build and "GGML_CUDA=ON" in build
+    assert VENV_DIR not in build  # the native build, not the vLLM venv
+    # Launched the native server with tool-calling on.
+    assert ep.calls[3].startswith("HF_HUB_ENABLE_HF_TRANSFER=1 nohup " + LLAMA_BIN)
+    assert "--jinja" in ep.calls[3]
 
 
 def test_parse_ssh_strings():
