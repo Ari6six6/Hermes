@@ -114,6 +114,11 @@ def _pick_model(cfg):
     cfg.set("model_id", spec.key)
     cfg.set("model", spec.served_name)
     cfg.set("quantization", spec.quantization)
+    # Apply this model's tuned build — sampling, completion budget, stall
+    # tolerance — so the agent loop and client serve its optimized profile, not
+    # the previous model's. (The Hermes profile equals the app defaults.)
+    for key, value in spec.runtime_config().items():
+        cfg.set(key, value)
     cfg.save()
     return spec
 
@@ -137,11 +142,13 @@ def cmd_run(cfg, args: str) -> None:
                   "(or `config set backend mock` for a dry run)."))
             return
     from hermes.models import resolve
+    spec = resolve(cfg)
     env = {
         "gpu_status": _gpu_status_line(cfg, state),
         "remote_workspace": state.get("remote_workspace", "~/hermes-workspace"),
         "context_window": state.get("served_ctx", 0),
-        "model_identity": resolve(cfg).identity,
+        "model_identity": spec.identity,
+        "model_tool_guidance": spec.tool_guidance,
     }
     backend = make_backend(cfg)
     agent.run(project, args.strip(), cfg, backend, gpu=gpu, env=env)

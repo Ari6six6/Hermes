@@ -72,6 +72,11 @@ def build_system_prompt(project: Project, env: dict) -> str:
         "toolbox_catalog": toolbox_catalog(),
     }
     system = render(template, variables)
+    guidance = (env.get("model_tool_guidance") or "").strip()
+    if guidance:
+        # Model-specific tool-calling discipline. Empty for the baseline model,
+        # so its system prompt is byte-for-byte what it always was.
+        system += "\n\n## Operating notes for this model\n\n" + guidance
     persona = read_persona().strip()
     if persona:
         system += "\n\n## Persona\n\n" + persona
