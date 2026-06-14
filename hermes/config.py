@@ -29,7 +29,9 @@ DEFAULTS: dict = {
     "build_proof_nudges": 1,  # in build mode, bounce a finish that never checked the twin
     "verify_code_runs": True,  # after a code task, an independent pass re-runs it in the sandbox
     "verify_rounds": 2,  # how many times that pass may bounce a failed run back
-    "verify_max_turns": 6,  # tool-call budget inside one verification pass
+    "verify_max_turns": 6,  # tool-call budget inside one verification/referee pass
+    "plan_build_tasks": True,  # build mode: a planner lays out a checklist before building
+    "referee_on_deadlock": True,  # build mode: a referee breaks a builder/antithesis deadlock
     "max_tool_result_chars": 8000,
     "package_budget_tokens": 10000,  # scaled down automatically on small contexts
     "history_max_prompts": 30,

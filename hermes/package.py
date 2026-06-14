@@ -221,6 +221,63 @@ def antithesis_prompt() -> str:
     return _template("antithesis.md").strip()
 
 
+def planner_prompt() -> str:
+    return _template("planner.md")
+
+
+def planner_request(project, request: str) -> str:
+    """The planner brief: mission + winning condition + the operator's request."""
+    manifest = {}
+    try:
+        manifest = project.twin().read_manifest()
+    except Exception:
+        pass
+    mission = manifest.get("mission") or "(no explicit mission set)"
+    win = manifest.get("win_condition") or "behave like the twin on every input checked"
+    return (
+        f"Mission: {mission}\n"
+        f"Winning condition: {win}\n\n"
+        "Operator request:\n"
+        f"{request.strip()}\n\n"
+        "Produce the execution checklist."
+    )
+
+
+def plan_brief(plan: str) -> str:
+    return (
+        "# PLAN (from the planner — execute against this, in order; the "
+        "antithesis will check each point)\n" + plan.strip()
+    )
+
+
+def referee_prompt() -> str:
+    return _template("referee.md")
+
+
+def referee_request(request: str, files: list[str], antithesis_report: str) -> str:
+    file_list = "\n".join(f"- {f}" for f in files) if files else "(none reported)"
+    return (
+        "The builder was asked:\n\n"
+        f"{request.strip()}\n\n"
+        "Files the builder wrote or changed:\n"
+        f"{file_list}\n\n"
+        "The antithesis's latest report (it says the solution does NOT pass):\n"
+        f"{(antithesis_report or '(no report)').strip()}\n\n"
+        "Investigate against the twin yourself and make the final, binding call."
+    )
+
+
+def referee_failed(reason: str) -> str:
+    return (
+        "A REFEREE was brought in because you and the independent checker kept "
+        "disagreeing, and with fresh eyes on the real sandbox it ruled against "
+        "the current solution:\n\n"
+        f"{reason.strip()}\n\n"
+        "This is the binding call. Fix the real problem it identified, verify it "
+        "yourself by running the code and the twin, and only then finish."
+    )
+
+
 def antithesis_request(project, request: str, files: list[str]) -> str:
     """The antithesis brief: break this solution against the twin."""
     file_list = "\n".join(f"- {f}" for f in files) if files else "(none reported)"

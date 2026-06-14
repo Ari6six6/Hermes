@@ -35,6 +35,16 @@ diffing; it is not the twin.)
 3. **Antithesis** — try to break it; prove it fails the winning condition,
    diffing against the twin.
 
+Two more roles bracket the thesis in build mode (same weights, different
+phase/prompt; both on by default, see `hermes/agent.py`). A **planner**
+(`prompts/planner.md`, `plan_build_tasks`) runs before the thesis and turns the
+mission + request into an ordered checklist of verifiable checkpoints the
+builder executes against. A **referee** (`prompts/referee.md`,
+`referee_on_deadlock`) is invoked only on deadlock — the `verify_rounds` are
+spent but the antithesis keeps failing a solution the doer keeps re-finishing —
+and makes the binding call with fresh eyes and the real sandbox, overruling
+either side, but only granting a PASS backed by real executed evidence.
+
 The roles *are* the compartmentalization, and **the seal is the boundary that
 enforces it**: while the twin is OPEN the agent has the recon tools to get to know
 the target thoroughly (plain GET requests — map directories/endpoints, find source
@@ -162,7 +172,11 @@ Divergence is the score; the goal is all-match. First pass is the expensive one
 - The reconstructed twin is ordinary userspace — **RAM/CPU/disk, never VRAM**
   (VRAM is the model's). It doesn't compete with the model for the scarce resource.
 - `build serve` launches it with `nohup`, so it **stays alive between runs** until
-  `pkill` or the box stops — but the box itself keeps billing while up.
+  `pkill` or the box stops — but the box itself keeps billing while up. When you're
+  done for now, `gpu down` can **pause** the box (Vast stop) rather than destroy it:
+  the disk — weights, the built llama.cpp, and the reconstructed twin — persists, so
+  `gpu up` resumes it and `gpu serve` skips the re-download/rebuild. You hold a
+  hard-won sandbox cheaply instead of trashing it.
 - The real cost is **agent turns** (one GPU inference each), so a from-scratch
   reconstruction is the expensive event. The cost lever is the **recipe**:
   `build_run` captures each working reconstruction step into `twin/recipe.jsonl`,

@@ -5,6 +5,10 @@ from hermes.llm import MockBackend
 
 
 def run_agent(project, cfg, script, confirm=None, gpu=None):
+    # The planner/referee are exercised in test_planner_referee; keep these
+    # loop-mechanics tests free of the extra build-mode passes.
+    cfg.set("plan_build_tasks", False)
+    cfg.set("referee_on_deadlock", False)
     backend = MockBackend(script)
     return agent.run(
         project,

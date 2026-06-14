@@ -146,6 +146,16 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
     tool_names_used: list[str] = []
     files_touched: list[str] = []
 
+    # Planner (build mode): before any code is written, an independent pass lays
+    # out an ordered checklist the builder executes against and the antithesis
+    # checks. On by default for sealed-twin tasks; off via `plan_build_tasks`.
+    if twin_sealed and cfg.get("plan_build_tasks", True):
+        print(magenta("  (planner — laying out the checklist before building)"))
+        plan = _plan(backend, prompt, project, think_re)
+        if plan:
+            messages.append({"role": "user", "content": package.plan_brief(plan)})
+            log({"role": "planner", "content": plan})
+
     try:
         for turns in range(1, max_turns + 1):
             result: ChatResult = backend.chat(messages, tools=registry.schemas())
@@ -250,6 +260,29 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                         think_re=think_re,
                     )
                     if not passed:
+                        if (twin_sealed and verify_rounds_left == 0
+                                and cfg.get("referee_on_deadlock", True)):
+                            # Deadlock: out of verify rounds and the antithesis is
+                            # still failing the solution the doer keeps finishing.
+                            # The referee makes the binding call with fresh eyes,
+                            # instead of silently accepting an unverified finish.
+                            print(magenta("  (referee — builder and antithesis "
+                                          "deadlocked; making the final call)"))
+                            ref_passed, ref_report = _referee(
+                                backend, registry, ctx, prompt, files_touched,
+                                report, log, cfg.get("verify_max_turns", 6),
+                                think_re=think_re,
+                            )
+                            if ref_passed:
+                                print(green("  (referee ruled the solution holds "
+                                            "— accepting)"))
+                                break
+                            ctx.finish_summary = None
+                            nudge = package.referee_failed(ref_report)
+                            messages.append({"role": "user", "content": nudge})
+                            log({"role": "user", "content": nudge})
+                            print(red("  (referee upheld the failure — back to fix it)"))
+                            continue
                         ctx.finish_summary = None
                         nudge = package.verify_failed(report)
                         messages.append({"role": "user", "content": nudge})
@@ -358,27 +391,30 @@ def _arg(arguments: str, key: str):
     return value if isinstance(value, str) else None
 
 
-def _verify(backend, registry, ctx, request, files, log, max_turns,
-            build=False, think_re=THINK_RE) -> tuple[bool, str]:
-    """An independent pass: fresh context, skeptical prompt, the same real
-    sandbox. It re-runs the code itself and returns (passed, report). Fails
-    closed — no clear PASS verdict means FAIL.
+def _plan(backend, request, project, think_re=THINK_RE) -> str:
+    """A pre-thesis pass: turn the mission + request into an ordered checklist the
+    builder executes against. No tools — it only thinks and writes the plan.
+    Returns "" on any failure so a missing plan never blocks the run."""
+    try:
+        result = backend.chat([
+            {"role": "system", "content": package.planner_prompt()},
+            {"role": "user", "content": package.planner_request(project, request)},
+        ])
+    except LLMTransportError:
+        return ""
+    return strip_think(result.content, think_re)
 
-    In build mode it runs as the ANTITHESIS: it diffs the solution against the
-    twin, and the anti-collusion rule applies — a PASS is rejected unless the pass
-    actually executed something (no real executed evidence => FAIL), because the
-    author and the critic share the same weights."""
-    if build:
-        system = package.antithesis_prompt()
-        user = package.antithesis_request(ctx.project, request, files)
-        label = "antithesis"
-    else:
-        system = package.verifier_prompt()
-        user = package.verifier_request(request, files)
-        label = "verifier"
+
+def _critic_pass(backend, registry, ctx, system, user, label, log, max_turns,
+                 require_evidence, no_evidence_msg, think_re=THINK_RE) -> tuple[bool, str]:
+    """One independent reviewing pass: fresh context, a skeptical prompt, the
+    same real sandbox. Re-runs the code itself and returns (passed, report).
+    Fails closed — no clear PASS verdict means FAIL. When `require_evidence` is
+    set, a PASS is rejected unless the pass actually ran/queried something real
+    (`VERIFY_EVIDENCE_TOOLS`), because author and critic share the same weights."""
     msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     report = ""
-    executed = False  # did the critic actually run anything that returned real output?
+    executed = False  # did the critic run/query anything that returned real output?
     for _ in range(max(1, max_turns)):
         try:
             result = backend.chat(msgs, tools=registry.schemas())
@@ -397,12 +433,8 @@ def _verify(backend, registry, ctx, request, files, log, max_turns,
         verdicts = VERDICT_RE.findall(shown) if shown else []
         if verdicts:
             passed = verdicts[-1].upper() == "PASS"
-            if build and passed and not executed:
-                # Anti-collusion: a PASS with no executed evidence is theater —
-                # the critic just agreed with its twin. Reject it as a FAIL.
-                return False, ("VERDICT PASS rejected — the antithesis never ran "
-                               "the solution or the twin, so it has no evidence the "
-                               "outputs actually match. Treating as FAIL.")
+            if require_evidence and passed and not executed:
+                return False, no_evidence_msg
             return passed, report
         if not result.tool_calls:
             break  # ended without a verdict and without acting — inconclusive
@@ -422,6 +454,49 @@ def _verify(backend, registry, ctx, request, files, log, max_turns,
             log({"role": f"{label}-tool", "name": tc.name, "content": out})
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
     return False, report or f"(the {label} produced no verdict)"
+
+
+def _verify(backend, registry, ctx, request, files, log, max_turns,
+            build=False, think_re=THINK_RE) -> tuple[bool, str]:
+    """The doer doesn't grade its own homework. In build mode this is the
+    ANTITHESIS (diff the solution against the twin, anti-collusion evidence
+    required); otherwise the plain verifier (re-run the code, text PASS ok)."""
+    if build:
+        return _critic_pass(
+            backend, registry, ctx,
+            package.antithesis_prompt(),
+            package.antithesis_request(ctx.project, request, files),
+            "antithesis", log, max_turns, require_evidence=True,
+            no_evidence_msg=(
+                "VERDICT PASS rejected — the antithesis never ran the solution or "
+                "the twin, so it has no evidence the outputs actually match. "
+                "Treating as FAIL."),
+            think_re=think_re,
+        )
+    return _critic_pass(
+        backend, registry, ctx,
+        package.verifier_prompt(),
+        package.verifier_request(request, files),
+        "verifier", log, max_turns, require_evidence=False,
+        no_evidence_msg="", think_re=think_re,
+    )
+
+
+def _referee(backend, registry, ctx, request, files, antithesis_report, log,
+             max_turns, think_re=THINK_RE) -> tuple[bool, str]:
+    """The tie-breaker, invoked only on deadlock (verify rounds spent, antithesis
+    still failing). Fresh eyes, the real sandbox, and the authority to overrule
+    either side — but a PASS needs real executed evidence or the antithesis stands."""
+    return _critic_pass(
+        backend, registry, ctx,
+        package.referee_prompt(),
+        package.referee_request(request, files, antithesis_report),
+        "referee", log, max_turns, require_evidence=True,
+        no_evidence_msg=(
+            "VERDICT PASS rejected — the referee ran nothing, so it has no "
+            "evidence to overturn the antithesis. The antithesis stands; FAIL."),
+        think_re=think_re,
+    )
 
 
 def _brief(arguments: str, cap: int = 100) -> str:

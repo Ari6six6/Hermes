@@ -9,6 +9,7 @@ yes = lambda *a, **k: True
 
 
 def _run(project, cfg, prompt, script, gpu):
+    cfg.set("plan_build_tasks", False)  # planner is exercised in test_planner_referee
     return agent.run(project, prompt, cfg, MockBackend(script), gpu=gpu, env={},
                      confirm_fn=yes)
 
