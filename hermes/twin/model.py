@@ -230,6 +230,35 @@ class TwinModel:
         model to cover a miss. Re-seal when done."""
         self._patch_manifest(sealed=False)
 
+    # -- reconstruction recipe ---------------------------------------------
+    @property
+    def recipe_path(self) -> Path:
+        return self.root / "recipe.jsonl"
+
+    def add_step(self, cmd: str, note: str = "") -> None:
+        """Capture one working reconstruction step. The recipe is the cheap way
+        to rebuild the stack later — the expensive part (deriving the steps) is
+        paid once and replayed."""
+        self.root.mkdir(parents=True, exist_ok=True)
+        with self.recipe_path.open("a") as f:
+            f.write(json.dumps({"cmd": cmd, "note": note,
+                                "ts": time.strftime("%Y-%m-%d %H:%M:%S")},
+                               ensure_ascii=False) + "\n")
+
+    def recipe(self) -> list[dict]:
+        if not self.recipe_path.exists():
+            return []
+        out = []
+        for line in self.recipe_path.read_text().splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                out.append(json.loads(line))
+            except json.JSONDecodeError:
+                continue
+        return out
+
     # -- the ground-truth lookup -------------------------------------------
     def respond(self, method: str, path: str, query: str = "",
                 body: str | None = None) -> Exchange | None:

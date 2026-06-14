@@ -106,7 +106,7 @@ they target observable behavior.
 | Clone engine | `hermes/twin/clone.py` | The live-touching component. Autonomous, comprehensive, read-only; injectable `fetch`. `clone()` + `expand()`. |
 | Recon | `hermes/twin/recon.py` | Stack fingerprinting + recon helpers (subdomains, exposed-source, dir-scan, robots/sitemap mining). |
 | Recon tools | `hermes/tools/recon.py` | The recon agent's eyes: `recon_subdomains` / `recon_sources` / `recon_dirscan`. Register only while the twin is OPEN. |
-| Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_diff` / `twin_seal`. Register only while the twin is OPEN. |
+| Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_diff` / `build_run` / `build_recipe` / `twin_seal`. Register only while the twin is OPEN. |
 | Recon/build framing | `hermes/prompts/recon_build.md` | Injected while the twin is OPEN: "get to know the target, stand up the twin, prove it, seal it." |
 | Runtime twin | `hermes/twin/server.py` | Self-contained stdlib HTTP server. Exact-replay or miss. Runs standalone on the box: `python3 server.py <model-dir> <port>`. |
 | Deploy | `hermes/twin/deploy.py` | `build serve` — pushes the server + model to the box, launches it on `localhost:<twin_port>` so the solution and its tests hit it like the real API. |
@@ -164,8 +164,16 @@ Divergence is the score; the goal is all-match. First pass is the expensive one
 - `build serve` launches it with `nohup`, so it **stays alive between runs** until
   `pkill` or the box stops — but the box itself keeps billing while up.
 - The real cost is **agent turns** (one GPU inference each), so a from-scratch
-  reconstruction is the expensive event; snapshotting the built stack so refine
-  passes resume instead of rebuild is the cost lever.
+  reconstruction is the expensive event. The cost lever is the **recipe**:
+  `build_run` captures each working reconstruction step into `twin/recipe.jsonl`,
+  so a later pass or a fresh box replays the recipe (`build_recipe`) instead of the
+  agent re-deriving the build — the expensive derivation is paid once.
+  - Open question that governs full reconstruction: installing the stack on the box
+    (`apt`, etc.) needs network, which the no-box-network rule currently bounces to
+    the phone. The clean resolution is phase-scoped — allow box network *only*
+    while the twin is OPEN (reconstruction), keep it off once SEALED — but that
+    reverses an explicit rule, so it's a deliberate operator decision, not a silent
+    flip.
 - Context: build work is log/diff heavy; **~16k tokens is a floor, 32k
   comfortable**. The package budget already scales to the served context and
   truncates tool output, and the differential approach carries forward only the

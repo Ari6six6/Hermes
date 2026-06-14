@@ -22,9 +22,12 @@ open-source pieces and stand up the genuine software in the box. The twin should
   files, **`recon_subdomains`** shows its footprint, **`http_request`** reads any
   specific response.
 - Pull and build what you need: download on the phone (`download_file` /
-  `http_request`), move it to the box with `transfer`, build and run it with
-  `remote_shell` — read the real build output and iterate, don't assume. Capture how
-  the real target responds with **`twin_record`** / **`twin_clone`**.
+  `http_request`), move it to the box with `transfer`, and stand the stack up with
+  **`build_run`** — it runs the step on the box and, when it succeeds, captures it
+  into the twin's recipe. Deriving the build is the expensive part; recording it
+  means a later pass (or a fresh box) replays the recipe instead of re-deriving it.
+  `build_recipe` shows what's captured. Read real build output and iterate, don't
+  assume. Capture how the target responds with **`twin_record`** / **`twin_clone`**.
 
 The goal is simple and unforgiving: **zero divergence** between the twin and the
 live target. Drive `twin_diff` to all-match.

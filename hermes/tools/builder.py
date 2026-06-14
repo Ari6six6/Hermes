@@ -8,6 +8,8 @@ OPEN; sealing ends the phase and hands off to the build agents.
 
 from __future__ import annotations
 
+import json
+
 from hermes.tools.base import obj_schema, tool
 from hermes.twin.model import Exchange, TwinModel
 
@@ -134,6 +136,57 @@ def twin_diff(args, ctx):
 
 
 @tool(
+    "build_run",
+    "Run a reconstruction step on the box AND capture it into the twin's recipe "
+    "when it succeeds — so a later pass or a fresh box can rebuild the stack by "
+    "replaying the recipe instead of you re-deriving every step (that derivation "
+    "is the expensive part). Use it for the commands that stand up the stack. "
+    "Network steps still belong on the phone.",
+    obj_schema(
+        {"command": {"type": "string"},
+         "note": {"type": "string", "description": "what this step does (optional)"},
+         "timeout": {"type": "integer", "description": "seconds (optional)"}},
+        ["command"],
+    ),
+)
+def build_run(args, ctx):
+    if ctx.registry is None:
+        return "ERROR: registry unavailable"
+    twin = _twin(ctx)
+    if not twin.exists():
+        return "ERROR: no twin for this project."
+    call = {"command": args["command"]}
+    if args.get("timeout"):
+        call["timeout"] = args["timeout"]
+    out = ctx.registry.dispatch("remote_shell", json.dumps(call), ctx)
+    if out.startswith("exit code 0"):
+        twin.add_step(args["command"], str(args.get("note", "")))
+        return f"[recorded to recipe — {len(twin.recipe())} step(s)]\n{out}"
+    return f"[not recorded — the step didn't cleanly succeed]\n{out}"
+
+
+@tool(
+    "build_recipe",
+    "Show the reconstruction recipe captured so far: the ordered steps that stand "
+    "up the twin. On a fresh box, replay these to restore the stack quickly "
+    "instead of figuring them out again.",
+    obj_schema({}, []),
+)
+def build_recipe(args, ctx):
+    twin = _twin(ctx)
+    if not twin.exists():
+        return "ERROR: no twin for this project."
+    steps = twin.recipe()
+    if not steps:
+        return "recipe empty — capture steps with build_run as you reconstruct the stack."
+    lines = [f"reconstruction recipe ({len(steps)} step(s)):"]
+    for i, s in enumerate(steps, 1):
+        note = f"   # {s['note']}" if s.get("note") else ""
+        lines.append(f"  {i}. {s['cmd']}{note}")
+    return "\n".join(lines)
+
+
+@tool(
     "twin_seal",
     "Seal the twin: freeze it and open the build phase. Do this ONLY once you've "
     "verified the twin behaves like the target — an inaccurate twin poisons "
@@ -154,4 +207,4 @@ def twin_seal(args, ctx):
             "is open — the next run builds the solution against this frozen twin.")
 
 
-TOOLS = [twin_record, twin_clone, twin_diff, twin_seal]
+TOOLS = [twin_record, twin_clone, twin_diff, build_run, build_recipe, twin_seal]
