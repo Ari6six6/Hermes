@@ -124,7 +124,7 @@ during build, and the registry + system prompt swap with it:
 | | Twin OPEN (recon/build) | Twin SEALED (build) |
 |---|---|---|
 | Role | recon / builder | thesis, then antithesis |
-| Prompt | `recon_build.md` | `build_mode.md` |
+| Prompt | `recon_build.md` (url) / `recon_build_repo.md` (repo) | `build_mode.md` |
 | Tools | recon (`recon_*`) + builder (`twin_record/clone/seal`) | `twin_request/map/stack/expand/reground` |
 | Live target | read-only, to learn & build the twin | never (only `twin_expand`/`twin_reground`, narrowly) |
 | Anti-bail gate | off | on |
@@ -144,13 +144,23 @@ stands it up and seals it (`twin_seal`). For a quick path without the agent, `bu
 seal` freezes the seed as-is. Mission (what to build) and winning condition (how we
 know it's done) are two distinct, plain-English fields.
 
+## Two ways to source a twin
+
+Both converge on the same sealed representation (recorded ground-truth samples),
+so build mode / antithesis / `build serve` are mode-agnostic — only the
+recon/build phase differs:
+
+- **`url`** (`project build <name> <url>`) — a live service. The builder seeds from
+  the target's HTTP surface and records what it returns.
+- **`repo`** (`project build <name> repo <git-url> [ref]`) — a codebase. The
+  builder clones it on the phone, builds and *runs* it in the box, then records the
+  real reference's behavior. Highest fidelity: the twin *is* the real software.
+
 ## What's next
 
-1. **`repo` mode**: clone + build + run a reference codebase to produce the twin
-   (the other source of truth besides a live URL).
-2. **End-to-end shakeout** on a real target + box: drive recon → seal → `build
+1. **End-to-end shakeout** on a real target + box: drive recon → seal → `build
    serve` → thesis/antithesis once against an actual service, and tune the prompts
    from what the 36B model actually does.
-3. **Builder-side proof gate**: today `twin_seal` requires samples + a strong
+2. **Builder-side proof gate**: today `twin_seal` requires samples + a strong
    prompt; a harder gate could require the builder to show a real
-   target-vs-twin match before it's allowed to seal.
+   reference-vs-twin match before it's allowed to seal.

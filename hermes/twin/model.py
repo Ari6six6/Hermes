@@ -131,6 +131,14 @@ class TwinModel:
         return self.read_manifest().get("source", "")
 
     @property
+    def mode(self) -> str:
+        return self.read_manifest().get("mode", "url")
+
+    @property
+    def ref(self) -> str:
+        return self.read_manifest().get("ref", "")
+
+    @property
     def mission(self) -> str:
         return self.read_manifest().get("mission", "")
 
@@ -140,12 +148,13 @@ class TwinModel:
 
     # -- lifecycle ---------------------------------------------------------
     def init(self, source: str, mode: str = "url", mission: str = "",
-             win_condition: str = "") -> None:
+             win_condition: str = "", ref: str = "") -> None:
         self.root.mkdir(parents=True, exist_ok=True)
         self.exchanges_path.write_text("")
         self.write_manifest({
             "source": source,
-            "mode": mode,
+            "mode": mode,  # "url" (live service) | "repo" (codebase to build & run)
+            "ref": ref.strip(),  # repo mode: branch/tag/commit to pin
             "mission": mission.strip(),
             "win_condition": win_condition.strip(),
             "sealed": False,
