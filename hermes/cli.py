@@ -266,8 +266,11 @@ def cmd_gpu(cfg, args: str) -> None:
             return
         print(f"model: {cyan(spec.label)}")
         print(f"GPUs: {cyan(', '.join(plan.gpu_names))} — {plan.total_vram_gb}GB total")
-        print(f"plan: tp={plan.tensor_parallel}, context={plan.max_model_len}, "
-              f"util={plan.gpu_memory_utilization}")
+        if spec.server == "vllm":
+            detail = f"vLLM · tp={plan.tensor_parallel}, util={plan.gpu_memory_utilization}"
+        else:
+            detail = f"llama.cpp · {plan.tensor_parallel} GPU(s)"
+        print(f"plan: {detail}, context={plan.max_model_len}")
         for note in plan.notes:
             print(yellow(f"note: {note}"))
         try:
