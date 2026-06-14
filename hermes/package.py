@@ -192,6 +192,32 @@ def verifier_prompt() -> str:
     return (PROMPTS_DIR / "verifier.md").read_text().strip()
 
 
+def antithesis_prompt() -> str:
+    return (PROMPTS_DIR / "antithesis.md").read_text().strip()
+
+
+def antithesis_request(project, request: str, files: list[str]) -> str:
+    """The antithesis brief: break this solution against the twin."""
+    file_list = "\n".join(f"- {f}" for f in files) if files else "(none reported)"
+    manifest = {}
+    try:
+        manifest = project.twin().read_manifest()
+    except Exception:
+        pass
+    mission = manifest.get("mission") or request.strip()
+    win = manifest.get("win_condition") or "(no explicit winning condition set)"
+    return (
+        "A build agent was asked:\n\n"
+        f"{request.strip()}\n\n"
+        f"Mission: {mission}\n"
+        f"Winning condition: {win}\n\n"
+        "It claims to have met the winning condition, writing/changing these files:\n"
+        f"{file_list}\n\n"
+        "Break it against the twin now: run the real solution and the twin on real "
+        "inputs, compare their actual outputs, then give your VERDICT."
+    )
+
+
 def verifier_request(request: str, files: list[str]) -> str:
     file_list = "\n".join(f"- {f}" for f in files) if files else "(none reported)"
     return (

@@ -221,21 +221,27 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
                     # skeptical pass re-runs the code in the real sandbox and
                     # returns a verdict the doer can't fake.
                     verify_rounds_left -= 1
-                    print(magenta("  (independent verification — re-running the "
-                                  "code in the sandbox)"))
+                    print(magenta(
+                        "  (antithesis — breaking the solution against the twin)"
+                        if twin_sealed else
+                        "  (independent verification — re-running the code in the sandbox)"))
                     passed, report = _verify(
                         backend, registry, ctx, prompt, files_touched, log,
-                        cfg.get("verify_max_turns", 6),
+                        cfg.get("verify_max_turns", 6), build=twin_sealed,
                     )
                     if not passed:
                         ctx.finish_summary = None
                         nudge = package.verify_failed(report)
                         messages.append({"role": "user", "content": nudge})
                         log({"role": "user", "content": nudge})
-                        print(red("  (verification FAILED — sending it back to "
-                                  "fix the real problem)"))
+                        print(red("  (antithesis BROKE it — sending it back to fix "
+                                  "the real problem)" if twin_sealed else
+                                  "  (verification FAILED — sending it back to fix "
+                                  "the real problem)"))
                         continue
-                    print(green("  (verification PASSED — the code actually runs)"))
+                    print(green("  (antithesis could not break it — it holds against "
+                                "the twin)" if twin_sealed else
+                                "  (verification PASSED — the code actually runs)"))
                 break
             if consecutive_errors >= MAX_CONSECUTIVE_ERRORS:
                 print(yellow("  (circuit breaker: too many consecutive tool errors)"))
@@ -325,47 +331,68 @@ def _arg(arguments: str, key: str):
     return value if isinstance(value, str) else None
 
 
-def _verify(backend, registry, ctx, request, files, log, max_turns) -> tuple[bool, str]:
+def _verify(backend, registry, ctx, request, files, log, max_turns,
+            build=False) -> tuple[bool, str]:
     """An independent pass: fresh context, skeptical prompt, the same real
     sandbox. It re-runs the code itself and returns (passed, report). Fails
-    closed — no clear PASS verdict means FAIL."""
-    msgs = [
-        {"role": "system", "content": package.verifier_prompt()},
-        {"role": "user", "content": package.verifier_request(request, files)},
-    ]
+    closed — no clear PASS verdict means FAIL.
+
+    In build mode it runs as the ANTITHESIS: it diffs the solution against the
+    twin, and the anti-collusion rule applies — a PASS is rejected unless the pass
+    actually executed something (no real executed evidence => FAIL), because the
+    author and the critic share the same weights."""
+    if build:
+        system = package.antithesis_prompt()
+        user = package.antithesis_request(ctx.project, request, files)
+        label = "antithesis"
+    else:
+        system = package.verifier_prompt()
+        user = package.verifier_request(request, files)
+        label = "verifier"
+    msgs = [{"role": "system", "content": system}, {"role": "user", "content": user}]
     report = ""
+    executed = False  # did the critic actually run anything that returned real output?
     for _ in range(max(1, max_turns)):
         try:
             result = backend.chat(msgs, tools=registry.schemas())
         except LLMTransportError:
-            return False, "(verifier could not reach the backend)"
+            return False, f"(the {label} could not reach the backend)"
         shown = strip_think(result.content)
         log({
-            "role": "verifier",
+            "role": label,
             "content": result.content,
             "tool_calls": [{"name": tc.name, "arguments": tc.arguments}
                            for tc in result.tool_calls],
         })
         if shown:
             report = shown
-            print(magenta("  [verify] ") + dim(_brief(shown.splitlines()[0], 120)))
+            print(magenta(f"  [{label}] ") + dim(_brief(shown.splitlines()[0], 120)))
         verdicts = VERDICT_RE.findall(shown) if shown else []
         if verdicts:
-            return verdicts[-1].upper() == "PASS", report
+            passed = verdicts[-1].upper() == "PASS"
+            if build and passed and not executed:
+                # Anti-collusion: a PASS with no executed evidence is theater —
+                # the critic just agreed with its twin. Reject it as a FAIL.
+                return False, ("VERDICT PASS rejected — the antithesis never ran "
+                               "the solution or the twin, so it has no evidence the "
+                               "outputs actually match. Treating as FAIL.")
+            return passed, report
         if not result.tool_calls:
             break  # ended without a verdict and without acting — inconclusive
         msgs.append(_assistant_msg(result))
         for tc in result.tool_calls:
             if tc.name == "finish_run":
-                out = ("Not your tool — you are the verifier. Run the code and "
+                out = (f"Not your tool — you are the {label}. Run the code and "
                        "end with a line 'VERDICT: PASS' or 'VERDICT: FAIL'.")
             else:
                 out = registry.dispatch(tc.name, tc.arguments, ctx)
-                print(dim("    [verify] → ") + cyan(tc.name))
+                if not out.startswith(("ERROR", "DENIED")):
+                    executed = True
+                print(dim(f"    [{label}] → ") + cyan(tc.name))
                 _echo_result(out)
-            log({"role": "verifier-tool", "name": tc.name, "content": out})
+            log({"role": f"{label}-tool", "name": tc.name, "content": out})
             msgs.append({"role": "tool", "tool_call_id": tc.id, "content": out})
-    return False, report or "(verifier produced no verdict)"
+    return False, report or f"(the {label} produced no verdict)"
 
 
 def _brief(arguments: str, cap: int = 100) -> str:

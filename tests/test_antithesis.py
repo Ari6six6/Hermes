@@ -1,0 +1,94 @@
+"""The build-mode antithesis: diff the solution against the twin, and reject a
+PASS that has no executed evidence (anti-collusion — same weights, no free pass)."""
+
+from hermes import agent
+from hermes.llm import MockBackend
+from hermes.twin.model import Exchange
+
+SANDBOX = object()  # truthy stand-in for an attached sandbox, like the verify tests
+
+
+def _seal_twin(project):
+    twin = project.twin()
+    twin.init(source="https://api.example.com", mission="reimplement /ping",
+              win_condition="GET /ping returns pong")
+    twin.add_exchange(Exchange(method="GET", path="/ping", status=200,
+                               response_body="pong", content_type="text/plain"))
+    twin.seal()
+
+
+def _run(project, cfg, script):
+    return agent.run(project, "build /ping", cfg, MockBackend(script),
+                     gpu=SANDBOX, env={}, confirm_fn=lambda *a, **k: True)
+
+
+def test_antithesis_passes_when_outputs_match(project, cfg):
+    _seal_twin(project)
+    result = _run(project, cfg, [
+        {"tool": "write_file", "args": {"path": "workspace/app.py", "content": "print('pong')"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},     # doer checks (passes build gate)
+        {"tool": "finish_run", "args": {"summary": "ping returns pong"}},
+        # antithesis: actually queries the twin, then rules
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"text": "solution prints pong; twin /ping -> pong. They match. VERDICT: PASS"},
+    ])
+    assert not result.aborted
+    assert result.summary == "ping returns pong"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert '"role": "antithesis"' in transcript
+
+
+def test_antithesis_pass_without_evidence_is_rejected(project, cfg):
+    _seal_twin(project)
+    result = _run(project, cfg, [
+        {"tool": "write_file", "args": {"path": "workspace/app.py", "content": "print('pong')"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"tool": "finish_run", "args": {"summary": "trust me"}},
+        # antithesis just agrees, runs nothing -> anti-collusion override to FAIL
+        {"text": "Looks correct to me. VERDICT: PASS"},
+        # bounced back; doer finishes again, this time the antithesis really checks
+        {"tool": "finish_run", "args": {"summary": "verified for real"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"text": "ran it: pong, twin: pong. VERDICT: PASS"},
+    ])
+    assert not result.aborted
+    assert result.summary == "verified for real"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "VERDICT PASS rejected" in transcript  # the collusion guard fired
+
+
+def test_antithesis_breaks_divergent_solution_then_doer_fixes(project, cfg):
+    _seal_twin(project)
+    result = _run(project, cfg, [
+        {"tool": "write_file", "args": {"path": "workspace/app.py", "content": "print('nope')"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"tool": "finish_run", "args": {"summary": "done (wrong)"}},
+        # antithesis runs the twin, finds divergence
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"text": "solution prints nope but twin /ping -> pong. VERDICT: FAIL"},
+        # bounced -> doer fixes and re-finishes
+        {"tool": "edit_file", "args": {"path": "workspace/app.py", "old": "nope", "new": "pong"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"tool": "finish_run", "args": {"summary": "fixed: returns pong"}},
+        {"tool": "twin_request", "args": {"path": "/ping"}},
+        {"text": "now prints pong == twin pong. VERDICT: PASS"},
+    ])
+    assert not result.aborted
+    assert result.summary == "fixed: returns pong"
+    assert (project.workspace_dir / "app.py").read_text() == "print('pong')"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert "did NOT pass" in transcript  # the FAIL was fed back to the doer
+
+
+def test_non_build_verify_still_passes_on_text_verdict(project, cfg):
+    # Outside build mode (no sealed twin), the anti-collusion evidence rule does
+    # NOT apply — keep the existing verifier behavior (a text PASS is accepted).
+    result = _run(project, cfg, [
+        {"tool": "write_file", "args": {"path": "workspace/m.py", "content": "print(2+2)"}},
+        {"tool": "finish_run", "args": {"summary": "done"}},
+        {"text": "Ran python m.py, output 4. VERDICT: PASS"},
+    ])
+    assert not result.aborted
+    assert result.summary == "done"
+    transcript = (project.runs_dir / "0001" / "transcript.jsonl").read_text()
+    assert '"role": "verifier"' in transcript  # plain verifier, not antithesis
