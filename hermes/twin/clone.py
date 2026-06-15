@@ -245,7 +245,7 @@ def expand(model: TwinModel, base_url: str, paths, *, fetch=_httpx_fetch,
         model.add_exchange(Exchange(
             method="GET", path=urlsplit(norm).path or "/", query=urlsplit(norm).query,
             status=status, content_type=str(resp_headers.get("content-type", "")),
-            response_body=text, source="expand",
+            response_headers=_keep(resp_headers), response_body=text, source="expand",
         ))
         added += 1
         emit("exchange", f"GET {norm} -> {status} ({len(text)}B)")

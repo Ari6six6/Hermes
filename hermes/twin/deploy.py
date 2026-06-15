@@ -141,18 +141,30 @@ def _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout, clean) ->
 
 def _serve_replay(ep, model: TwinModel, port: int, emit) -> dict:
     """Fallback: push the stdlib replay server + recorded exchanges and launch it.
-    This is the reference responder for opaque targets, not the reconstructed twin."""
+    This is the reference responder for opaque targets, not the reconstructed twin.
+    Writes a transcript to the phone (like the blueprint path) so a failed launch
+    is debuggable without the box."""
     remote_dir = anchored_path(REMOTE_SUBDIR, ep.remote_workspace)
     rq = shell_path(remote_dir)
+    log_path = str(serve_log_path(model))
+    transcript: list[str] = []
+
+    def fail(error: str) -> dict:
+        _write_serve_log(model, transcript)
+        return {"ok": False, "error": error, "remote_dir": remote_dir,
+                "source": "replay", "log_path": log_path}
+
     ep.run(f"mkdir -p {rq}")
 
     for name, path in (("server.py", SERVER_SRC),
                        ("exchanges.jsonl", model.exchanges_path)):
         if not Path(path).exists():
-            return {"ok": False, "error": f"missing local file: {name}"}
+            transcript.append(f"# missing local file: {name}")
+            return fail(f"missing local file: {name}")
         rc, err = ep.run_in_from_file(f"cat > {rq}/{name}", Path(path))
+        transcript.append(f"$ push {name} -> [rc {rc}] {err.strip()[-300:]}".rstrip())
         if rc != 0:
-            return {"ok": False, "error": f"failed to push {name}: {err.strip()[-300:]}"}
+            return fail(f"failed to push {name}: {err.strip()[-300:]}")
         emit(f"pushed {name}")
 
     # loopback up (a fresh net namespace leaves lo down), restart any old twin.
@@ -163,11 +175,12 @@ def _serve_replay(ep, model: TwinModel, port: int, emit) -> dict:
 
     rc, out, _ = ep.run(f"sleep 1; cat {rq}/twin.log 2>/dev/null")
     log = (out or "").strip()
+    transcript.append(f"# launch :{port} -> {log or '(no twin.log)'}")
     if "twin up" not in log:
-        return {"ok": False, "error": log or "twin did not report startup",
-                "remote_dir": remote_dir, "log": log, "source": "replay"}
+        return fail(log or "twin did not report startup")
+    _write_serve_log(model, transcript)
     return {"ok": True, "port": port, "remote_dir": remote_dir, "log": log,
-            "source": "replay"}
+            "source": "replay", "log_path": log_path}
 
 
 def stop(ep, port: int) -> None:
