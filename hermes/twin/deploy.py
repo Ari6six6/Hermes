@@ -18,6 +18,7 @@ responses), we fall back to the self-contained stdlib replay server
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from hermes.ssh import anchored_path, shell_path
@@ -25,6 +26,21 @@ from hermes.twin.model import TwinModel
 
 SERVER_SRC = Path(__file__).parent / "server.py"
 REMOTE_SUBDIR = "twin-runtime"
+
+
+def serve_log_path(model: TwinModel) -> Path:
+    """Where the last `build serve` transcript is written, on the phone — so a
+    failed respin is debuggable without the box."""
+    return model.root / "serve.log"
+
+
+def _write_serve_log(model: TwinModel, lines: list[str]) -> None:
+    try:
+        model.root.mkdir(parents=True, exist_ok=True)
+        header = time.strftime("%Y-%m-%d %H:%M:%S") + "  build serve\n"
+        serve_log_path(model).write_text(header + "\n".join(lines) + "\n")
+    except OSError:
+        pass
 
 # A network-free liveness probe: a TCP connect to the port, in stdlib python
 # (always on the box — curl is bounced to the phone by the net policy). Exit 0
@@ -52,33 +68,44 @@ def _stop_cmd(port: int) -> str:
 
 
 def deploy(ep, model: TwinModel, port: int, on_event=None,
-           step_timeout: int = 1800) -> dict:
+           step_timeout: int = 1800, clean: bool = False) -> dict:
     """Bring the twin up on localhost:<port>. Replays the blueprint recipe to
     stand up the real reconstructed server; falls back to the stdlib replay
-    responder when there's no recipe. Returns {"ok", "port", "remote_dir",
-    "log", "source"} (or {"ok": False, "error", ...})."""
+    responder when there's no recipe. With clean=True, wipes the runtime dir and
+    frees the port first for a fresh respin. Returns {"ok", "port", "remote_dir",
+    "log", "source", "log_path"} (or {"ok": False, "error", ...})."""
     def emit(text):
         if on_event:
             on_event(text)
 
     recipe = model.recipe()
     if recipe:
-        return _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout)
+        return _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout, clean)
     emit("no recipe yet — serving the recorded-response reference responder")
     return _serve_replay(ep, model, port, emit)
 
 
-def _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout) -> dict:
-    """Replay the captured reconstruction steps to stand the real stack up."""
+def _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout, clean) -> dict:
+    """Replay the captured reconstruction steps to stand the real stack up, with
+    a transcript written to the phone for debugging."""
     remote_dir = anchored_path(REMOTE_SUBDIR, ep.remote_workspace)
     rq = shell_path(remote_dir)
+    transcript: list[str] = []
+    log_path = str(serve_log_path(model))
+
+    if clean:
+        ep.run(f"fuser -k {int(port)}/tcp 2>/dev/null || true")  # free the port
+        ep.run(f"rm -rf {rq}")                                   # wipe stale build
+        emit("clean respin — freed the port and wiped the runtime dir")
+
     ep.run(f"mkdir -p {rq}")
     ep.run("ip link set lo up 2>/dev/null || true")  # fresh net ns leaves lo down
 
-    if _alive(ep, port):
+    if not clean and _alive(ep, port):
         emit(f"already serving on :{port}")
+        _write_serve_log(model, [f"already up on :{port}"])
         return {"ok": True, "port": port, "remote_dir": remote_dir,
-                "log": "already up", "source": "blueprint"}
+                "log": "already up", "source": "blueprint", "log_path": log_path}
 
     emit(f"spinning up from blueprint — replaying {len(recipe)} recipe step(s)")
     for i, step in enumerate(recipe, 1):
@@ -86,22 +113,30 @@ def _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout) -> dict:
         note = step.get("note") or cmd
         full = f"cd {rq} && export TWIN_PORT={int(port)} && {cmd}"
         rc, out, err = ep.run(full, timeout=step_timeout)
+        tail = (err or out or "").strip()[-500:]
+        transcript.append(f"$ {cmd}\n[rc {rc}] {tail}".rstrip())
         if rc != 0:
+            _write_serve_log(model, transcript)
             return {"ok": False, "remote_dir": remote_dir, "source": "blueprint",
+                    "log_path": log_path,
                     "error": f"recipe step {i}/{len(recipe)} failed "
-                             f"({note[:60]}): " + (err or out).strip()[-300:]}
+                             f"({note[:60]}): {tail[-300:]}"}
         emit(f"step {i}/{len(recipe)} ok: {note[:60]}")
 
     ep.run("sleep 1")  # let a just-launched daemon bind the port
-    if _alive(ep, port):
+    up = _alive(ep, port)
+    transcript.append(f"# health check :{port} -> {'listening' if up else 'NOT listening'}")
+    _write_serve_log(model, transcript)
+    if up:
         emit(f"runtime server up on :{port}")
         return {"ok": True, "port": port, "remote_dir": remote_dir,
                 "log": f"blueprint replayed, listening on :{port}",
-                "source": "blueprint"}
+                "source": "blueprint", "log_path": log_path}
     return {"ok": False, "remote_dir": remote_dir, "source": "blueprint",
+            "log_path": log_path,
             "error": f"recipe replayed but nothing is listening on :{port} — the "
                      "serving step must bind $TWIN_PORT and run in the background "
-                     "(e.g. nohup ... &)"}
+                     "(e.g. nohup ... &). See the serve log."}
 
 
 def _serve_replay(ep, model: TwinModel, port: int, emit) -> dict:

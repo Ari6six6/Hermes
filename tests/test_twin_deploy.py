@@ -53,6 +53,31 @@ def test_deploy_from_blueprint_fails_on_bad_step(project):
     report = deploy.deploy(ep, twin, 8900)
     assert not report["ok"]
     assert "recipe step 1" in report["error"]
+    # the transcript is written to the phone for debugging
+    assert deploy.serve_log_path(twin).exists()
+    log = deploy.serve_log_path(twin).read_text()
+    assert "package not found" in log and "apt-get install -y nginx" in log
+
+
+def test_deploy_clean_wipes_and_frees_port_then_replays(project):
+    twin = _twin_with_recipe(project)
+    # clean path skips the pre-check: fuser, rm, mkdir, lo-up, step1, step2, sleep, post(up)
+    ep = FakeEndpoint(responses=[(0, "", "")] * 7 + [(0, "", "")])
+    report = deploy.deploy(ep, twin, 8900, clean=True)
+    assert report["ok"] and report["source"] == "blueprint"
+    assert any("rm -rf" in c for c in ep.calls)
+    assert any("fuser -k 8900/tcp" in c for c in ep.calls)
+    assert any("export TWIN_PORT=8900" in c for c in ep.calls)
+
+
+def test_deploy_writes_serve_log_on_success(project):
+    twin = _twin_with_recipe(project)
+    ep = FakeEndpoint(responses=[(0, "", ""), (0, "", ""), (1, "", ""),
+                                 (0, "", ""), (0, "", ""), (0, "", ""), (0, "", "")])
+    report = deploy.deploy(ep, twin, 8900)
+    assert report["ok"]
+    log = deploy.serve_log_path(twin).read_text()
+    assert "health check :8900 -> listening" in log
 
 
 def test_deploy_pushes_files_launches_and_confirms(project):

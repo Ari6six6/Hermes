@@ -597,9 +597,11 @@ def cmd_build(cfg, args: str) -> None:
             return
         from hermes.twin import deploy as twin_deploy
         port = cfg.get("twin_port", 8900)
-        print(dim(f"spinning the twin up on the box (localhost:{port}) from the blueprint ..."))
+        clean = rest.strip() == "clean"
+        note = " (clean respin)" if clean else ""
+        print(dim(f"spinning the twin up on the box (localhost:{port}) from the blueprint{note} ..."))
         report = twin_deploy.deploy(
-            ep, twin, port,
+            ep, twin, port, clean=clean,
             step_timeout=cfg.get("twin_serve_step_timeout", 1800),
             on_event=lambda t: print(dim("  " + t)),
         )
@@ -610,6 +612,16 @@ def cmd_build(cfg, args: str) -> None:
                   + dim(f"  [{via}]"))
         else:
             print(red(f"twin failed to start: {report.get('error')}"))
+            if report.get("log_path"):
+                print(dim(f"  serve log: {report['log_path']}  (or `build logs`)"))
+
+    elif sub == "logs":  # the last build-serve transcript, for debugging a respin
+        from hermes.twin import deploy as twin_deploy
+        path = twin_deploy.serve_log_path(twin)
+        if path.exists():
+            print(path.read_text().rstrip())
+        else:
+            print(dim("no serve log yet — run `build serve` first."))
 
     elif sub == "blueprint":  # show the portable blueprint that respins the twin
         if not twin.exists():
@@ -706,7 +718,7 @@ HELP = f"""\
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
 {cyan('project')} build <name> <url>   reconstruct a target into a twin to work against
-{cyan('build')} win <text> | clone | seal | serve | blueprint | show | clear   the twin for this project
+{cyan('build')} win <text> | clone | seal | serve [clean] | blueprint | logs | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration
 {cyan('quit')}                  exit
