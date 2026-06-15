@@ -206,11 +206,11 @@ def cmd_project(cfg, args: str) -> None:
         for t in ("download_file", "transfer"):
             project.equip_tool(t)
         report = _clone_target(cfg, twin, url, seal=False)
-        print(green(f"build project '{name}' created — twin seeded with "
-                    f"{report['exchanges']} sample(s) (open)."))
+        print(green(f"build project '{name}' created — recon done: "
+                    f"{report.get('services', 0)} service(s), stack fingerprinted (open)."))
         print(dim("Set the task with `mission edit`, then `run build` — the agent "
-                  "reconstructs the target and tightens the twin until it matches "
-                  "(each `run build` is another refinement pass)."))
+                  "stands up a runtime clone of the real webserver from this recon "
+                  "(each `run build` is another reconstruction pass)."))
     elif sub == "use" and len(parts) > 1:
         try:
             Project.load(pdir, parts[1])
@@ -480,24 +480,46 @@ def cmd_host(cfg, args: str) -> None:
 
 
 def _clone_target(cfg, twin, url: str, seal: bool = False) -> dict:
-    """Seed a twin from a target, with live progress. seal=False leaves it open
-    for the recon/builder agent to refine and seal."""
+    """Recon a target into a twin blueprint, with live progress. This is not a
+    page mirror — the twin is meant to be a runtime clone of the real webserver,
+    so we fingerprint *what runs there* (the web stack and the listening
+    services/versions), not what its pages look like. seal=False leaves it open
+    for the recon/builder agent to reconstruct and seal."""
     from hermes.twin import clone as clone_mod
+    from hermes.twin import scan as scan_mod
     colors = {"exchange": green, "spec": cyan, "error": red, "done": cyan, "stack": cyan}
 
     def on_event(kind, text):
         print(colors.get(kind, dim)(f"  {text}"))
 
-    print(dim(f"seeding a twin from {url} (read-only, on the phone)..."))
-    return clone_mod.clone(
+    # Web-stack fingerprint: a light read of the root (+ discovery/well-known
+    # endpoints) to identify the app/framework/server — no crawl of the site's
+    # pages. max_depth=0 means we never follow links into the page graph.
+    print(dim(f"fingerprinting the web stack at {url} (read-only, on the phone)..."))
+    report = clone_mod.clone(
         twin, url,
         fetch=clone_mod._httpx_fetch,
         max_exchanges=cfg.get("twin_clone_max", 200),
         delay=cfg.get("twin_clone_delay", 0.5),
-        max_depth=cfg.get("twin_clone_depth", 2),
+        max_depth=cfg.get("twin_clone_depth", 0),
         seal=seal,
         on_event=on_event,
     )
+
+    # Service scan: the other half of "what runs here" — which TCP services are
+    # listening and their versions (nmap -sV when present, else a connect scan).
+    if cfg.get("scan_on_build", True):
+        result = scan_mod.scan(
+            url,
+            top_ports=cfg.get("scan_top_ports", 1000),
+            timeout=cfg.get("scan_timeout", 2.0),
+            workers=cfg.get("scan_workers", 100),
+            on_event=lambda t: print(cyan(f"  {t}")),
+        )
+        twin.store_services(result.to_dict())
+        print(scan_mod.format_scan(result))
+        report["services"] = len(result.services)
+    return report
 
 
 def cmd_build(cfg, args: str) -> None:

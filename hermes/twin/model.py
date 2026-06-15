@@ -183,6 +183,14 @@ class TwinModel:
     def stack(self) -> dict:
         return self.read_manifest().get("stack", {})
 
+    def store_services(self, scan: dict) -> None:
+        """Record the service/version scan — which TCP services run on the host."""
+        self._patch_manifest(services=scan)
+
+    @property
+    def services(self) -> dict:
+        return self.read_manifest().get("services", {})
+
     def add_exchange(self, ex: Exchange) -> None:
         """Append a real exchange. Refused once sealed — a sealed twin is frozen
         so the agent can trust it never shifts under it. (Use unseal() to grow.)"""
@@ -297,6 +305,16 @@ class TwinModel:
         if stack:
             from hermes.twin.recon import StackReport
             lines.append("stack:   " + StackReport(**stack).summary())
+        services = (m.get("services") or {}).get("services") or []
+        if services:
+            shown = ", ".join(
+                f"{s.get('port')}/{s.get('service') or '?'}"
+                + (f" {s.get('product')} {s.get('version')}".rstrip()
+                   if s.get("product") else "")
+                for s in services[:8]
+            )
+            more = f" (+{len(services) - 8} more)" if len(services) > 8 else ""
+            lines.append("services: " + shown + more)
         lines += [
             f"mission: {m.get('mission') or '(none set)'}",
             f"win:     {m.get('win_condition') or '(none set)'}",
