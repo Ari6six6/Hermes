@@ -21,7 +21,7 @@ def _seal(project):
 
 
 def _run(project, cfg, script, gpu=None):
-    with serve_reference_twin(project.twin_dir, cfg.get("twin_local_port", 8900)):
+    with serve_reference_twin(project.twin_dir, cfg.get("twin_port", 8900)):
         return agent.run(project, "make /ping return pong", cfg, MockBackend(script),
                          gpu=gpu, env={}, confirm_fn=lambda *a, **k: True)
 

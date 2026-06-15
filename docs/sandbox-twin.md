@@ -125,8 +125,8 @@ they target observable behavior.
 | Recon/build framing | `hermes/prompts/recon_build.md` | Injected while the twin is OPEN: "get to know the target, stand up the twin, prove it, seal it." |
 | Blueprint | `twin/recipe.jsonl` + manifest | The portable reconstruction blueprint, on the phone: the ordered `build_run` steps plus the recon fingerprint/services/topography. `build serve` replays it onto any box to respin the runtime server; `build blueprint` shows it. |
 | Reference responder | `hermes/twin/server.py` | Self-contained stdlib HTTP server that exact-replays recorded samples or misses. **Not the twin** — a diff-only reference for comparing a candidate against ground truth offline. Runs standalone: `python3 server.py <model-dir> <port>`. |
-| Sandbox host | `hermes/sandbox/` | The persistent VPS where the twin runs, separate from the ephemeral GPU box. State in `~/.hermes/sandbox.json`; reuses `SSHEndpoint`; probes the container runtime (and `/dev/kvm`). `sandbox add/status/down`. |
-| Deploy | `hermes/twin/deploy.py` | `build serve` — boots a **container** on the sandbox host from a base image and replays the blueprint recipe *inside it* to stand the **real reconstructed server** up, published on the VPS loopback `:<twin_port>` and tunneled to the phone. There is no recorded-response fallback: a twin is the real running software, or `build serve` says there's no recipe yet and points at `run build`. |
+| Sandbox | `hermes/sandbox/` | The local box Hermes runs on, where the twin container lives. `local_endpoint()` runs commands here (no SSH); `capabilities()` probes the container runtime and `/dev/kvm`. `sandbox status/provision`. |
+| Deploy | `hermes/twin/deploy.py` | `build serve` — boots a **local container** from a base image and replays the blueprint recipe *inside it* (`docker exec` per step) to stand the **real reconstructed server** up, published on `127.0.0.1:<twin_port>`. There is no recorded-response fallback: a twin is the real running software, or `build serve` says there's no recipe yet and points at `run build`. |
 | Antithesis | `hermes/prompts/antithesis.md` + `agent._verify(build=True)` | Diffs the solution against the twin; anti-collusion — a PASS with no executed evidence is rejected as FAIL. |
 | Build tools | `hermes/tools/twin.py` | `twin_request` / `twin_map` / `twin_stack` / `twin_expand` / `twin_reground`. Register only when a sealed twin exists. |
 | Build framing | `hermes/prompts/build_mode.md` | Injected once sealed: "build against the safe twin; show, don't claim; here's the mission + winning condition." |
@@ -149,13 +149,16 @@ during build, and the registry + system prompt swap with it:
 ## Operator flow
 
 ```
-sandbox add ssh://root@vps.example                # register the persistent VPS the twin runs on
+sandbox provision                                 # ensure a container runtime is on this box (once)
 project build shopapi https://shop.example.com    # create project, seed an OPEN twin
 mission edit                                       # the task (win = match the target, baked in)
 run build                                          # refinement pass: diff vs target, close the gap, seal
-build serve                                        # boot a container on the sandbox host and run the reconstruction in it
-run build /products to meet the mission            # thesis builds against the sealed twin
+build serve                                        # boot a local container and run the reconstruction in it
+run build /products to meet the mission            # thesis builds against the sealed twin at localhost
 ```
+
+Hermes runs on the VPS, so the twin is a container on the **same box** — reached
+at `127.0.0.1:<twin_port>`, no SSH hop and no tunnel.
 
 `run build` reopens the twin and runs a recon/build pass; run it again to tighten
 the match further. `build serve` ensures the reconstruction is live on the box. The

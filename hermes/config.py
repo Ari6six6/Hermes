@@ -48,8 +48,7 @@ DEFAULTS: dict = {
     "survey_max_paths": 400,  # cap on probed paths in the webserver survey
     "survey_workers": 40,  # concurrent probes in the survey
     "survey_subdomains": True,  # also pull the domain's subdomains from CT logs (crt.sh)
-    "twin_port": 8900,  # port the runtime twin serves on inside the sandbox host (VPS loopback)
-    "twin_local_port": 8900,  # phone-side port the twin tunnel forwards to (reach the twin here)
+    "twin_port": 8900,  # localhost port the runtime twin container publishes on
     "twin_base_image": "ubuntu:22.04",  # base image the container twin boots from before the recipe
     "twin_serve_step_timeout": 1800,  # per-recipe-step timeout when respinning from the blueprint
     "max_model_len": 0,  # 0 = pick automatically from detected VRAM

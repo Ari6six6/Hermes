@@ -12,7 +12,7 @@ yes = lambda *a, **k: True
 
 def _run(project, cfg, prompt, script, gpu):
     cfg.set("plan_build_tasks", False)  # planner is exercised in test_planner_referee
-    with serve_reference_twin(project.twin_dir, cfg.get("twin_local_port", 8900)):
+    with serve_reference_twin(project.twin_dir, cfg.get("twin_port", 8900)):
         return agent.run(project, prompt, cfg, MockBackend(script), gpu=gpu, env={},
                          confirm_fn=yes)
 

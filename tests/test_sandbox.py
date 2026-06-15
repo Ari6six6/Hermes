@@ -2,28 +2,17 @@ from tests.conftest import FakeEndpoint
 
 from hermes import sandbox
 from hermes.sandbox import provision
+from hermes.sandbox.local import LocalEndpoint
 
 
-def test_state_round_trip(home):
-    sandbox.save_sandbox_state({"host": "vps.example", "port": 2222, "user": "root"})
-    state = sandbox.load_sandbox_state()
-    assert state["host"] == "vps.example" and state["port"] == 2222
+def test_local_endpoint_runs_locally():
+    rc, out, _ = sandbox.local_endpoint().run("echo HERMES_OK")
+    assert rc == 0 and "HERMES_OK" in out
 
 
-def test_state_file_is_private(home):
-    sandbox.save_sandbox_state({"host": "vps.example"})
-    mode = sandbox.sandbox_state_path().stat().st_mode & 0o777
-    assert mode == 0o600
-
-
-def test_endpoint_from_state_none_without_host():
-    assert sandbox.endpoint_from_state({}) is None
-
-
-def test_endpoint_from_state_uses_sandbox_workspace():
-    ep = sandbox.endpoint_from_state({"host": "vps.example", "port": 2222})
-    assert ep.host == "vps.example" and ep.port == 2222
-    assert ep.remote_workspace == sandbox.SANDBOX_WORKSPACE
+def test_local_endpoint_reports_nonzero():
+    rc, _, _ = LocalEndpoint().run("exit 3")
+    assert rc == 3
 
 
 def test_probe_container_runtime_detects_docker():
@@ -55,7 +44,6 @@ def test_capabilities_bundles_probes():
 def test_ensure_runtime_returns_existing():
     ep = FakeEndpoint(responses=[(0, "docker\n", "")])
     assert provision.ensure_runtime(ep) == "docker"
-    # only the probe ran — no install attempted
     assert not any("apt-get" in c for c in ep.calls)
 
 

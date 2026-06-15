@@ -1,25 +1,21 @@
 # Hermes
 
-A package-per-prompt agent shell for Termux. It rents nothing and hides
-nothing: you rent a GPU on [Vast.ai](https://vast.ai), Hermes provisions
-[Hermes-4.3-36B](https://huggingface.co/NousResearch/Hermes-4.3-36B) on it via
-vLLM, and gives you an agent that lives across two machines:
+A package-per-prompt agent shell. It rents nothing and hides nothing: Hermes
+lives on a small **always-on VPS** — you SSH into it from your phone (Termux)
+and drive the REPL there — and rents a GPU on [Vast.ai](https://vast.ai) on
+demand, provisioning [Hermes-4.3-36B](https://huggingface.co/NousResearch/Hermes-4.3-36B)
+on it via vLLM. From that home box the agent reaches:
 
-- **your phone** (Termux) — where the operator is, where every project lives,
-  and the **only place with internet access**;
-- **the GPU box** — the model's home and the agent's disposable compute
-  sandbox. Internet from there is discouraged by design — a deny-list (plus a
-  kernel-level `unshare -n` speed bump when the box allows it) and, above all,
-  an honest ask: the box *can* reach the network, we ask the agent not to, so
-  all egress stays visible on the phone;
-- **the sandbox host** (optional) — a small, persistent VPS you register with
-  `sandbox add`, where the **runtime twin** of a target service runs inside a
-  container: a real, isolated, always-on clone you (and the code the agent
-  writes) can hit on localhost, decoupled from the rented-on-demand GPU. See
+- **the VPS itself** — where Hermes runs, every project lives, and the
+  **runtime twin** of a target service runs in a container right beside it: a
+  real, isolated clone you (and the code the agent writes) hit at localhost. See
   [docs/sandbox-twin.md](docs/sandbox-twin.md);
-- **your servers** (optional) — real machines you register with `host add`.
-  The agent reaches them from the phone: reads run free, anything mutating
-  asks you first.
+- **the GPU box** — the model's home and the agent's disposable compute
+  sandbox, rented on demand and reached over SSH. Internet from there is
+  discouraged by design — a deny-list (plus a kernel-level `unshare -n` speed
+  bump when the box allows it) keeps target traffic and exfil off the GPU;
+- **your servers** (optional) — real machines you register with `host add`:
+  reads run free, anything mutating asks you first.
 
 ## The stateful machine
 
@@ -70,14 +66,21 @@ executed evidence or the antithesis stands. So the loop is thesis → antithesis
 with a planner up front and a referee only on conflict — never a standing
 overseer taxing every turn.
 
-## Install (Termux)
+## Install (on the VPS)
+
+Hermes runs on the VPS; your phone is just the terminal you SSH in with. On a
+plain Ubuntu box:
 
 ```sh
-pkg install python openssh git
+apt install -y python3-pip git docker.io   # docker runs the twin (or `sandbox provision` later)
 git clone <this repo> && cd Hermes
 pip install -e .
 hermes
 ```
+
+Then from Termux it's just `ssh you@your-vps` and `hermes`. (Termux still works
+as a standalone host if you'd rather run it on the phone — the twin then needs a
+container runtime there.)
 
 ## Workflow
 

@@ -1,63 +1,24 @@
-"""The sandbox host: a persistent VPS where the runtime twin actually lives.
+"""The sandbox: the box Hermes runs on, and the twin that runs beside it.
 
-This is the box the vision always wanted — a real, always-on Linux machine,
-separate from the (ephemeral, rented-on-demand) GPU box, where a *contained*
-clone of the target service runs and stays alive between runs. The phone is the
-operator; the GPU box is disposable compute; the sandbox host is the lab bench.
-
-State lives in ~/.hermes/sandbox.json (0600), mirroring hermes.gpu. The endpoint
-reuses hermes.ssh.SSHEndpoint verbatim — same run/tunnel/file plumbing as the GPU
-box and managed hosts. Unlike a managed host (fail-closed, every write gated), the
-sandbox runs *free*: it is a disposable workshop like the GPU box, so its polarity
-is a deny-list speed bump, not a cage.
+Hermes lives on a persistent VPS — you SSH into it from your phone and drive the
+REPL there. The runtime twin of a target service runs as a **container on this
+same box**, reachable at localhost, decoupled from the GPU (which is still rented
+on demand and reached over SSH). There is no remote sandbox to register: the
+sandbox is here, and `local_endpoint()` runs commands on it.
 """
 
 from __future__ import annotations
 
-import json
-import os
-
-from hermes.config import hermes_home
-
-# Where the twin's reconstructed software is built and run on the VPS.
-SANDBOX_WORKSPACE = "~/hermes-sandbox"
+from hermes.sandbox.local import LocalEndpoint
 
 
-def sandbox_state_path():
-    return hermes_home() / "sandbox.json"
-
-
-def load_sandbox_state() -> dict:
-    path = sandbox_state_path()
-    if not path.exists():
-        return {}
-    try:
-        return json.loads(path.read_text())
-    except (json.JSONDecodeError, OSError):
-        return {}
-
-
-def save_sandbox_state(state: dict) -> None:
-    hermes_home().mkdir(parents=True, exist_ok=True)
-    sandbox_state_path().write_text(json.dumps(state, indent=2) + "\n")
-    os.chmod(sandbox_state_path(), 0o600)
-
-
-def endpoint_from_state(state: dict):
-    from hermes.ssh import SSHEndpoint
-
-    if not state.get("host"):
-        return None
-    return SSHEndpoint(
-        host=state["host"],
-        port=int(state.get("port", 22)),
-        user=state.get("user", "root"),
-        remote_workspace=state.get("remote_workspace", SANDBOX_WORKSPACE),
-    )
+def local_endpoint() -> LocalEndpoint:
+    """An executor for the local box (where the twin container runs)."""
+    return LocalEndpoint()
 
 
 def probe_container_runtime(ep) -> str:
-    """Which container runtime the VPS has, '' if none. Docker preferred (the
+    """Which container runtime is installed, '' if none. Docker preferred (the
     common case on a plain Ubuntu box); podman accepted where it's the default."""
     rc, out, _ = ep.run(
         "command -v docker >/dev/null 2>&1 && echo docker || "
@@ -69,7 +30,7 @@ def probe_container_runtime(ep) -> str:
 
 
 def probe_kvm(ep) -> bool:
-    """Does the VPS expose /dev/kvm? Gate for the future Firecracker microVM path
+    """Does the box expose /dev/kvm? Gate for the future Firecracker microVM path
     — most cheap VPSes are themselves KVM guests with nested virt OFF, so this is
     usually False and we run plain containers instead."""
     rc, out, _ = ep.run("test -e /dev/kvm && echo KVM || echo NOKVM", timeout=20)
@@ -77,7 +38,7 @@ def probe_kvm(ep) -> bool:
 
 
 def capabilities(ep) -> dict:
-    """Probe what isolation the VPS can offer, for sandbox.json + status."""
+    """Probe what isolation the box can offer, for `sandbox status`."""
     return {
         "runtime": probe_container_runtime(ep),
         "kvm": probe_kvm(ep),

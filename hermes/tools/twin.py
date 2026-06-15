@@ -1,9 +1,10 @@
 """Twin tools: the agent's window onto the runtime twin of the target.
 
-The twin is the **real reconstructed software** running in a contained sandbox on
-the VPS — a faithful, SAFE, live clone of the target, not the live service itself.
-`twin_request` hits that running clone over the tunnel and returns whatever it
-really does. The recorded request/response samples are kept only as *ground truth*
+The twin is the **real reconstructed software** running in a container on this
+box (the VPS Hermes lives on) — a faithful, SAFE, live clone of the target, not
+the live service itself. `twin_request` hits that running clone at localhost and
+returns whatever it really does. The recorded request/response samples are kept
+only as *ground truth*
 to prove the running twin matches the target (twin_map shows that surface;
 twin_reground re-checks one against the live target).
 
@@ -19,7 +20,7 @@ from hermes.tools.base import obj_schema, tool
 
 
 def _twin_base_url(ctx) -> str:
-    return f"http://127.0.0.1:{ctx.cfg.get('twin_local_port', 8900)}"
+    return f"http://127.0.0.1:{ctx.cfg.get('twin_port', 8900)}"
 
 
 @tool(
