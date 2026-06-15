@@ -27,6 +27,12 @@ from hermes.gpu import (
 )
 from hermes.llm import make_backend
 from hermes.project import Project, ProjectError
+from hermes.sandbox import (
+    capabilities as sandbox_capabilities,
+    endpoint_from_state as sandbox_endpoint_from_state,
+    load_sandbox_state,
+    save_sandbox_state,
+)
 from hermes.ssh import SSHEndpoint, SSHError, kill_pid, parse_ssh_string, pid_alive
 from hermes.ui import bold, cyan, dim, green, magenta, red, yellow
 
@@ -76,6 +82,19 @@ def _gpu_status_line(cfg, state) -> str:
     up = "vllm:up" if _probe_vllm(cfg) else "vllm:DOWN"
     ctx = state.get("served_ctx")
     return f"{state['host']}:{state['port']} ({up}{f', ctx {ctx}' if ctx else ''})"
+
+
+def _sandbox_status_line() -> str:
+    state = load_sandbox_state()
+    if not state.get("host"):
+        return "not attached"
+    caps = []
+    if state.get("runtime"):
+        caps.append(state["runtime"])
+    if state.get("kvm"):
+        caps.append("kvm")
+    suffix = f" ({', '.join(caps)})" if caps else ""
+    return f"{state['user']}@{state['host']}:{state['port']}{suffix}"
 
 
 def _edit_file(path: Path) -> None:
@@ -135,6 +154,7 @@ def cmd_run(cfg, args: str) -> None:
         return
     state = load_gpu_state()
     gpu = endpoint_from_state(state)
+    sandbox = sandbox_endpoint_from_state(load_sandbox_state())
     if cfg.get("backend") != "mock":
         if state.get("host"):
             _ensure_tunnel(cfg, state)
@@ -146,6 +166,7 @@ def cmd_run(cfg, args: str) -> None:
     spec = resolve(cfg)
     env = {
         "gpu_status": _gpu_status_line(cfg, state),
+        "sandbox_status": _sandbox_status_line(),
         "remote_workspace": state.get("remote_workspace", "~/hermes-workspace"),
         "context_window": state.get("served_ctx", 0),
         "model_identity": spec.identity,
@@ -171,7 +192,7 @@ def cmd_run(cfg, args: str) -> None:
         )
 
     backend = make_backend(cfg)
-    agent.run(project, prompt, cfg, backend, gpu=gpu, env=env)
+    agent.run(project, prompt, cfg, backend, gpu=gpu, env=env, sandbox=sandbox)
 
 
 def cmd_project(cfg, args: str) -> None:
@@ -432,6 +453,83 @@ def cmd_gpu(cfg, args: str) -> None:
         save_gpu_state(state)
     else:
         print(dim("usage: gpu attach [sshstr] | serve | status | tunnel | up | down"))
+
+
+def cmd_sandbox(cfg, args: str) -> None:
+    """The persistent VPS where the runtime twin lives. Separate from the GPU box
+    (rented on demand for compute): the sandbox host stays up so a contained clone
+    of the target keeps running between runs."""
+    parts = args.split(maxsplit=1)
+    sub = parts[0] if parts else "status"
+    state = load_sandbox_state()
+
+    if sub == "add":
+        if len(parts) < 2:
+            print(red("usage: sandbox add ssh://user@host[:port]  (or a pasted `ssh -p PORT user@host`)"))
+            return
+        try:
+            user, host, port = parse_ssh_string(parts[1])
+        except SSHError as e:
+            print(red(e))
+            return
+        from hermes.sandbox import SANDBOX_WORKSPACE
+        ep = SSHEndpoint(host=host, port=port, user=user,
+                         remote_workspace=SANDBOX_WORKSPACE)
+        print(dim(f"checking ssh {user}@{host}:{port} ..."))
+        if not ep.check():
+            print(red("ssh check failed — is the VPS reachable and your key installed?"))
+            return
+        ep.run(f"mkdir -p {ep.remote_workspace}")
+        print(dim("probing what the box can isolate with..."))
+        caps = sandbox_capabilities(ep)
+        runtime = caps["runtime"] or yellow("none yet (install on first `build serve`)")
+        print(f"container runtime: {cyan(str(runtime))}")
+        print("kvm (microVM-capable): " + (
+            green("yes") if caps["kvm"]
+            else dim("no — running plain containers (expected on a cheap VPS)")
+        ))
+        if state.get("tunnel_pid"):  # don't orphan a tunnel to the old box
+            kill_pid(state["tunnel_pid"])
+        save_sandbox_state({
+            "host": host, "port": port, "user": user,
+            "remote_workspace": ep.remote_workspace,
+            "runtime": caps["runtime"], "kvm": caps["kvm"],
+            "tunnel_pid": 0,
+        })
+        print(green("sandbox host registered.")
+              + dim(" The runtime twin will be built and run here. Next: `build serve`."))
+
+    elif sub == "status":
+        if not state.get("host"):
+            print(yellow("no sandbox host — `sandbox add ssh://user@host[:port]`"))
+            return
+        box = f"{state['user']}@{state['host']}:{state['port']}"
+        print(f"box: {cyan(box)}")
+        ep = sandbox_endpoint_from_state(state)
+        caps = sandbox_capabilities(ep) if ep else {"runtime": state.get("runtime", ""), "kvm": state.get("kvm", False)}
+        print(f"container runtime: {cyan(caps['runtime'] or 'none yet')}")
+        print("kvm: " + (green("yes") if caps["kvm"] else dim("no")))
+        print(f"tunnel: pid {state.get('tunnel_pid')} "
+              + (green("alive") if pid_alive(state.get("tunnel_pid", 0)) else dim("none")))
+
+    elif sub == "down":
+        if state.get("tunnel_pid"):
+            kill_pid(state["tunnel_pid"])
+            state["tunnel_pid"] = 0
+            save_sandbox_state(state)
+        ep = sandbox_endpoint_from_state(state)
+        if ep:
+            ep.close_master()
+        print(green("sandbox tunnel torn down.")
+              + dim(" The twin container keeps running on the VPS until `build serve` "
+                    "respins it or you stop it there."))
+
+    elif sub == "rm":
+        save_sandbox_state({})
+        print(green("sandbox host forgotten."))
+
+    else:
+        print(dim("usage: sandbox add <ssh-string> | status | down | rm"))
 
 
 def cmd_host(cfg, args: str) -> None:
@@ -717,6 +815,7 @@ HELP = f"""\
 {cyan('tools')}                 list the agent's tools
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
+{cyan('sandbox')} add <sshstr> | status | down | rm              the VPS where the runtime twin lives
 {cyan('project')} build <name> <url>   reconstruct a target into a twin to work against
 {cyan('build')} win <text> | clone | seal | serve [clean] | blueprint | logs | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
@@ -744,6 +843,8 @@ def dispatch(cfg, line: str) -> bool:
         cmd_gpu(cfg, rest)
     elif cmd == "host":
         cmd_host(cfg, rest)
+    elif cmd == "sandbox":
+        cmd_sandbox(cfg, rest)
     elif cmd == "build":
         cmd_build(cfg, rest)
     elif cmd == "config":

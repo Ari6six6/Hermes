@@ -87,9 +87,11 @@ def _normalize(text: str) -> str:
     return " ".join(text.split()).lower()
 
 
-def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
+def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None,
+        sandbox=None):
     """Execute one agent run. `env` carries gpu_status / remote_workspace /
-    context_window for the package; `gpu` is an SSHEndpoint or None."""
+    context_window for the package; `gpu` is an SSHEndpoint or None; `sandbox` is
+    the VPS sandbox-host SSHEndpoint (where the runtime twin lives) or None."""
     if confirm_fn is None:
         from hermes.confirm import confirm as confirm_fn
 
@@ -117,6 +119,7 @@ def run(project, prompt, cfg, backend, gpu=None, env=None, confirm_fn=None):
         project=project,
         cfg=cfg,
         gpu=gpu,
+        sandbox=sandbox,
         hosts={n: hosts_mod.host_endpoint(r) for n, r in host_records.items()},
         confirm=confirm_fn,
         served_ctx=env.get("context_window", 0),

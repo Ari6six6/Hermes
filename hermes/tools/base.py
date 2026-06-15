@@ -42,6 +42,7 @@ class ToolContext:
     project: object  # Project
     cfg: object  # Config
     gpu: object | None = None  # SSHEndpoint or None
+    sandbox: object | None = None  # the VPS sandbox-host SSHEndpoint, or None
     hosts: dict = field(default_factory=dict)  # managed hosts: name -> SSHEndpoint
     confirm: Callable[..., bool] = lambda *a, **k: False
     registry: Optional[object] = None  # set after build
