@@ -114,6 +114,28 @@ def test_deploy_fails_closed_on_push_error(project):
     assert "server.py" in report["error"]
 
 
+def test_deploy_replay_failure_points_at_serve_log(project):
+    # The replay (no-recipe) path must, like the blueprint path, write a serve
+    # log and hand back log_path so the CLI can point the operator at it.
+    twin = _sealed_twin(project)        # no recipe -> replay responder
+    ep = FakeEndpoint(responses=[(0, "", "")] * 7)  # twin.log empty -> no startup
+    report = deploy.deploy(ep, twin, 8900)
+    assert not report["ok"] and report["source"] == "replay"
+    assert report.get("log_path")       # cli.py keys off this to print the path
+    assert deploy.serve_log_path(twin).exists()
+    assert "launch :8900" in deploy.serve_log_path(twin).read_text()
+
+
+def test_deploy_replay_success_reports_log_path(project):
+    twin = _sealed_twin(project)
+    responses = [(0, "", "")] * 6 + [(0, "twin up: http://127.0.0.1:8900 (1 exchanges)", "")]
+    ep = FakeEndpoint(responses=responses)
+    report = deploy.deploy(ep, twin, 8900)
+    assert report["ok"] and report["source"] == "replay"
+    assert report.get("log_path")
+    assert deploy.serve_log_path(twin).exists()
+
+
 def test_stop_anchors_exact_port_no_prefix_collision():
     # pkill -f matches an unanchored regex; stopping :890 must not also match the
     # argv of a twin on :8900-:8909. The pattern escapes the dots and anchors

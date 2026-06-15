@@ -1,3 +1,6 @@
+import socket
+import threading
+
 from hermes.twin import scan as scan_mod
 from hermes.twin.scan import Service, format_scan, host_of, scan
 
@@ -88,3 +91,34 @@ def test_format_scan_lists_services():
 def test_format_scan_handles_empty():
     res = scan_mod.ScanResult(host="example.com", engine="builtin")
     assert "no open services" in format_scan(res)
+
+
+def test_probe_survives_tls_handshake_failure(monkeypatch):
+    # A port that is open but does NOT actually speak TLS makes the ssl handshake
+    # raise ssl.SSLError (an OSError). _probe must absorb it and report the port
+    # as open-but-unreadable ("") — otherwise it propagates through the thread
+    # pool and aborts the whole scan, not just this port.
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def serve():
+        try:
+            conn, _ = srv.accept()
+            conn.recv(1024)  # swallow the TLS ClientHello
+            conn.sendall(b"HTTP/1.0 200 OK\r\n\r\nplain text, not TLS")
+            conn.close()
+        except OSError:
+            pass
+
+    t = threading.Thread(target=serve, daemon=True)
+    t.start()
+    monkeypatch.setattr(scan_mod, "_TLS_PORTS", scan_mod._TLS_PORTS | {port})
+    try:
+        banner = scan_mod._probe("127.0.0.1", port, timeout=2.0)
+        assert banner == ""  # absorbed, not raised, not None
+    finally:
+        srv.close()
+        t.join(timeout=2)

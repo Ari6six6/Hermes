@@ -141,3 +141,19 @@ def test_expand_grows_sealed_model(project, monkeypatch):
     assert report["added"] == 1
     assert twin.is_sealed()  # re-sealed after growth
     assert twin.respond("GET", "/users/2").response_body == '{"id":2}'
+
+
+def test_expand_keeps_fingerprintable_headers(project, monkeypatch):
+    # expand() must preserve the response headers clone()/reground() keep, so the
+    # stack fingerprint still sees Server/X-Powered-By on grown exchanges.
+    monkeypatch.setattr(clone_mod.time, "sleep", lambda *_: None)
+    twin = project.twin()
+    twin.init(source="https://api.example.com")
+    twin.seal()
+    fetch = FakeFetch({"/wp-json": (200, {"content-type": "application/json",
+                                          "server": "Apache/2.4.52",
+                                          "x-powered-by": "PHP/8.1"}, "{}")})
+    expand(twin, "https://api.example.com", ["/wp-json"], fetch=fetch, delay=0)
+    headers = twin.respond("GET", "/wp-json").response_headers
+    assert headers.get("server") == "Apache/2.4.52"
+    assert headers.get("x-powered-by") == "PHP/8.1"

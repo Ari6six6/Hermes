@@ -159,7 +159,15 @@ def _probe(host: str, port: int, timeout: float) -> str | None:
             ctx = ssl.create_default_context()
             ctx.check_hostname = False
             ctx.verify_mode = ssl.CERT_NONE
-            sock = ctx.wrap_socket(raw, server_hostname=host)
+            try:
+                sock = ctx.wrap_socket(raw, server_hostname=host)
+            except OSError:
+                # Open, but the handshake failed (port doesn't actually speak
+                # TLS, or it timed out). Report it as a reachable port with no
+                # readable banner rather than crashing the whole scan — the
+                # exception would otherwise propagate through ThreadPoolExecutor
+                # .map and abort every other port.
+                return ""
         sock.settimeout(timeout)
         if port in _HTTP_PORTS or port in _TLS_PORTS:
             try:
