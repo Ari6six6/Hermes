@@ -79,12 +79,12 @@ def test_recon_build_block_injected_while_open(project, cfg):
     twin = _open_twin(project)
     twin.add_exchange(Exchange(method="GET", path="/", status=200, response_body="x"))
     block = package.recon_build_block(project)
-    assert "reconstruct the target" in block
+    assert "BECOME the webserver" in block
     assert "https://api.example.com" in block
     # reaches the system prompt, and is the recon/build framing (not build mode)
     system = package.assemble(project, "go", {}, cfg)[0]["content"]
-    assert "Recon & build" in system
+    assert "Recon & reconstruction" in system
     # once sealed, the block flips to build mode
     twin.seal()
     assert package.recon_build_block(project) == ""
-    assert "SAFE TWIN" in package.assemble(project, "go", {}, cfg)[0]["content"]
+    assert "RUNNING twin" in package.assemble(project, "go", {}, cfg)[0]["content"]

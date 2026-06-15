@@ -76,7 +76,7 @@ def test_build_mode_block_injected_when_sealed(project):
     _seal(project, [Exchange(method="GET", path="/", status=200, response_body="ok")],
           mission="reimplement /users", win_condition="byte-match")
     block = package.build_mode_block(project)
-    assert "SAFE TWIN" in block
+    assert "RUNNING twin" in block
     assert "reimplement /users" in block
     assert "byte-match" in block
 
@@ -90,5 +90,5 @@ def test_build_mode_reaches_system_prompt(project, cfg):
     _seal(project, [Exchange(method="GET", path="/", status=200, response_body="ok")],
           mission="reimplement /users", win_condition="byte-match")
     system = package.assemble(project, "go", {}, cfg)[0]["content"]
-    assert "SAFE TWIN" in system
+    assert "RUNNING twin" in system
     assert "reimplement /users" in system
