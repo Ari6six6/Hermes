@@ -118,13 +118,14 @@ they target observable behavior.
 | Recon tools | `hermes/tools/recon.py` | The recon agent's eyes: `recon_subdomains` / `recon_sources` / `recon_dirscan`. Register only while the twin is OPEN. |
 | Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_diff` / `build_run` / `build_recipe` / `twin_seal`. Register only while the twin is OPEN. |
 | Recon/build framing | `hermes/prompts/recon_build.md` | Injected while the twin is OPEN: "get to know the target, stand up the twin, prove it, seal it." |
-| Runtime twin | `hermes/twin/server.py` | Self-contained stdlib HTTP server. Exact-replay or miss. Runs standalone on the box: `python3 server.py <model-dir> <port>`. |
-| Deploy | `hermes/twin/deploy.py` | `build serve` — pushes the server + model to the box, launches it on `localhost:<twin_port>` so the solution and its tests hit it like the real API. |
+| Blueprint | `twin/recipe.jsonl` + manifest | The portable reconstruction blueprint, on the phone: the ordered `build_run` steps plus the recon fingerprint/services/topography. `build serve` replays it onto any box to respin the runtime server; `build blueprint` shows it. |
+| Reference responder | `hermes/twin/server.py` | Self-contained stdlib HTTP server that exact-replays recorded samples or misses. **Not the twin** — a reference responder for diffing, and the `build serve` fallback when there's no recipe. Runs standalone: `python3 server.py <model-dir> <port>`. |
+| Deploy | `hermes/twin/deploy.py` | `build serve` — replays the blueprint recipe on the box to stand the **real reconstructed server** up on `localhost:<twin_port>` (binding `$TWIN_PORT`), so the solution and its tests hit a live clone of the target. Falls back to the reference responder when no recipe exists. |
 | Antithesis | `hermes/prompts/antithesis.md` + `agent._verify(build=True)` | Diffs the solution against the twin; anti-collusion — a PASS with no executed evidence is rejected as FAIL. |
 | Build tools | `hermes/tools/twin.py` | `twin_request` / `twin_map` / `twin_stack` / `twin_expand` / `twin_reground`. Register only when a sealed twin exists. |
 | Build framing | `hermes/prompts/build_mode.md` | Injected once sealed: "build against the safe twin; show, don't claim; here's the mission + winning condition." |
 | Anti-bail gate | `hermes/agent.py` + `prompts/build_proof.md` | Bounces a build-mode finish that changed code but never queried the twin. |
-| CLI | `hermes/cli.py` | `project build <name> <url>`; `build win|clone|seal|serve|show|clear`. |
+| CLI | `hermes/cli.py` | `project build <name> <url>`; `build win|clone|seal|serve|blueprint|show|clear`. |
 
 ## The phases, and the seal between them
 

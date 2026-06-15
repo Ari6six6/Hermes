@@ -49,6 +49,7 @@ DEFAULTS: dict = {
     "survey_workers": 40,  # concurrent probes in the survey
     "survey_subdomains": True,  # also pull the domain's subdomains from CT logs (crt.sh)
     "twin_port": 8900,  # local port the runtime twin serves on (in the sandbox)
+    "twin_serve_step_timeout": 1800,  # per-recipe-step timeout when respinning from the blueprint
     "max_model_len": 0,  # 0 = pick automatically from detected VRAM
     "gpu_port": 8000,
     "local_port": 8000,
