@@ -191,6 +191,14 @@ class TwinModel:
     def services(self) -> dict:
         return self.read_manifest().get("services", {})
 
+    def store_topography(self, survey: dict) -> None:
+        """Record the webserver survey — dirs/endpoints, exposed files, subdomains."""
+        self._patch_manifest(topography=survey)
+
+    @property
+    def topography(self) -> dict:
+        return self.read_manifest().get("topography", {})
+
     def add_exchange(self, ex: Exchange) -> None:
         """Append a real exchange. Refused once sealed — a sealed twin is frozen
         so the agent can trust it never shifts under it. (Use unseal() to grow.)"""
@@ -315,6 +323,18 @@ class TwinModel:
             )
             more = f" (+{len(services) - 8} more)" if len(services) > 8 else ""
             lines.append("services: " + shown + more)
+        topo = m.get("topography") or {}
+        if topo:
+            dirs = topo.get("dirs") or []
+            exposed = topo.get("exposed") or []
+            subs = topo.get("subdomains") or []
+            bits = [f"{len(dirs)} dir(s)/endpoint(s)"]
+            if exposed:
+                readable = sum(1 for e in exposed if e.get("readable"))
+                bits.append(f"{len(exposed)} exposed file(s) ({readable} readable)")
+            if subs:
+                bits.append(f"{len(subs)} subdomain(s)")
+            lines.append("topology: " + ", ".join(bits))
         lines += [
             f"mission: {m.get('mission') or '(none set)'}",
             f"win:     {m.get('win_condition') or '(none set)'}",
