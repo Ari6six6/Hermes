@@ -39,7 +39,11 @@ DEFAULTS: dict = {
     "allow_gpu_network": False,  # False: box may install/build (net), but raw egress + target traffic go via the phone; True: unrestricted box net
     "twin_clone_max": 200,  # max requests a single benign clone makes
     "twin_clone_delay": 0.5,  # polite seconds between live reads while cloning
-    "twin_clone_depth": 2,  # how deep the same-origin crawl follows links
+    "twin_clone_depth": 0,  # 0 = fingerprint only (no page crawl); >0 follows links
+    "scan_on_build": True,  # run a service/version scan (nmap -sV / connect) on build
+    "scan_top_ports": 1000,  # nmap --top-ports N; the fallback uses its curated set
+    "scan_timeout": 2.0,  # per-port connect/read timeout for the fallback scan
+    "scan_workers": 100,  # concurrent probes in the fallback connect scan
     "twin_port": 8900,  # local port the runtime twin serves on (in the sandbox)
     "max_model_len": 0,  # 0 = pick automatically from detected VRAM
     "gpu_port": 8000,
