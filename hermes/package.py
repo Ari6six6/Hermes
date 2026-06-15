@@ -104,10 +104,49 @@ def build_system_prompt(project: Project, env: dict) -> str:
     return system
 
 
+def _stack_line(manifest: dict) -> str:
+    stack = manifest.get("stack") or {}
+    from hermes.twin.recon import StackReport
+    return StackReport(**stack).summary() if stack else "(not fingerprinted yet)"
+
+
+def _services_line(manifest: dict) -> str:
+    """One-line summary of the host service/version scan."""
+    svc = (manifest.get("services") or {}).get("services") or []
+    if not svc:
+        return "(not scanned)"
+    parts = []
+    for s in svc[:10]:
+        soft = " ".join(x for x in (s.get("product"), s.get("version")) if x)
+        parts.append(f"{s.get('service') or '?'}/{s.get('port')}"
+                     + (f" ({soft})" if soft else ""))
+    more = f" (+{len(svc) - 10} more)" if len(svc) > 10 else ""
+    return ", ".join(parts) + more
+
+
+def _topography_line(manifest: dict) -> str:
+    """One-line summary of the webserver survey (dirs, exposed files, subdomains)."""
+    topo = manifest.get("topography") or {}
+    if not topo:
+        return "(not surveyed)"
+    dirs = topo.get("dirs") or []
+    exposed = topo.get("exposed") or []
+    subs = topo.get("subdomains") or []
+    bits = [f"{len(dirs)} dir(s)/endpoint(s)"]
+    readable = [e["path"] for e in exposed if e.get("readable")]
+    if exposed:
+        lead = ", ".join(readable[:5]) if readable else ", ".join(
+            e["path"] for e in exposed[:5])
+        bits.append(f"exposed: {lead}" + (" (readable)" if readable else " (auth-gated)"))
+    if subs:
+        bits.append(f"{len(subs)} subdomain(s)")
+    return "; ".join(bits)
+
+
 def recon_build_block(project: Project) -> str:
     """When a twin exists but isn't sealed yet, this is the recon/builder phase:
-    the agent's job is to get to know the target and stand up the twin, then seal
-    it. Returns "" when there's no open twin."""
+    the agent's job is to reconstruct the target's real webserver into the twin and
+    seal it. Returns "" when there's no open twin."""
     try:
         twin = project.twin()
     except Exception:
@@ -115,13 +154,12 @@ def recon_build_block(project: Project) -> str:
     if not twin.exists() or twin.is_sealed():
         return ""
     manifest = twin.read_manifest()
-    stack = manifest.get("stack") or {}
-    from hermes.twin.recon import StackReport
-    stack_line = StackReport(**stack).summary() if stack else "(not fingerprinted yet)"
     return render(_template("recon_build.md"), {
         "source": manifest.get("source", "(unknown)"),
         "exchange_count": manifest.get("exchange_count", len(twin.exchanges())),
-        "stack": stack_line,
+        "stack": _stack_line(manifest),
+        "services": _services_line(manifest),
+        "topography": _topography_line(manifest),
     })
 
 
@@ -140,6 +178,9 @@ def build_mode_block(project: Project) -> str:
     return render(_template("build_mode.md"), {
         "source": manifest.get("source", "(unknown)"),
         "exchange_count": manifest.get("exchange_count", 0),
+        "stack": _stack_line(manifest),
+        "services": _services_line(manifest),
+        "topography": _topography_line(manifest),
         "mission": manifest.get("mission") or "(set the mission with `mission edit`)",
         "win_condition": manifest.get("win_condition")
         or "your solution is correct and behaves like the twin on every input you check",

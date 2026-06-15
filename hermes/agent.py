@@ -23,10 +23,12 @@ MAX_CONSECUTIVE_ERRORS = 3
 # pass. (Running-only tasks like "check the logs" don't need code-verifying.)
 CODE_WRITE_TOOLS = frozenset({"write_file", "edit_file", "remote_write"})
 
-# In build mode, checking your work against the twin means actually querying it.
-# Finishing a code change without ever doing this is the "told my guy it worked
-# and pissed off" move — the one thing the build is built to prevent.
-BUILD_PROOF_TOOLS = frozenset({"twin_request"})
+# In build mode, checking your work against the twin means actually exercising it —
+# replaying its ground-truth response (twin_request) or re-checking a request
+# against the live target (twin_reground). Finishing a code change without ever
+# doing this is the "told my guy it worked and pissed off" move — the one thing
+# the build is built to prevent.
+BUILD_PROOF_TOOLS = frozenset({"twin_request", "twin_reground"})
 
 # What counts as the antithesis having REALLY exercised something — running the
 # solution or querying the twin. A passive read (read_file, remote_read,

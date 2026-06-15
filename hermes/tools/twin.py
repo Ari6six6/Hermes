@@ -68,9 +68,10 @@ def twin_map(args, ctx):
 
 @tool(
     "twin_stack",
-    "Show what recon fingerprinted about the target's stack — server, runtime, "
-    "framework/CMS and version, and whether it's a known open-source stack worth "
-    "reconstructing as real software or an opaque service to mirror by behavior.",
+    "Show the recon blueprint of the target: the fingerprinted web stack (server, "
+    "runtime, framework/CMS and version), the host services and versions the scan "
+    "found, and the webserver topography (dirs/endpoints and any exposed "
+    "source/config). This is what the twin reconstructs.",
     obj_schema({}, []),
 )
 def twin_stack(args, ctx):
@@ -78,14 +79,32 @@ def twin_stack(args, ctx):
     if not twin.is_sealed():
         return "ERROR: no sealed twin for this project."
     stack = twin.stack
-    if not stack:
-        return "no stack fingerprint recorded."
-    from hermes.twin.recon import StackReport
-
-    report = StackReport(**stack)
-    lines = [report.summary(), ""]
-    if report.signals:
-        lines.append("signals: " + ", ".join(report.signals))
+    services = twin.services
+    topo = twin.topography
+    if not (stack or services or topo):
+        return "no recon blueprint recorded."
+    lines = []
+    if stack:
+        from hermes.twin.recon import StackReport
+        report = StackReport(**stack)
+        lines.append(report.summary())
+        if report.signals:
+            lines.append("signals: " + ", ".join(report.signals))
+    svc = (services or {}).get("services") or []
+    if svc:
+        lines.append("")
+        from hermes.twin.scan import Service, format_scan, ScanResult
+        result = ScanResult(host=services.get("host", ""),
+                            engine=services.get("engine", "builtin"),
+                            services=[Service(**s) for s in svc])
+        lines.append(format_scan(result))
+    if topo:
+        lines.append("")
+        from hermes.twin.survey import format_survey, SurveyResult
+        lines.append(format_survey(SurveyResult(
+            host=topo.get("host", ""), dirs=topo.get("dirs", []),
+            exposed=topo.get("exposed", []), subdomains=topo.get("subdomains", []),
+            checked=topo.get("checked", 0))))
     return "\n".join(lines)
 
 

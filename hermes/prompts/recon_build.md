@@ -1,41 +1,59 @@
-## Recon & build — reconstruct the target, refine until it matches
+## Recon & reconstruction — make the twin BECOME the webserver
 
-Target: **{{source}}**. Your job this run is to stand up a faithful, *running* copy
-— a twin — of this system in the sandbox, and tighten it until it behaves like the
-live target. The twin is currently OPEN ({{exchange_count}} sample(s)); you finish
-by sealing it.
+Target: **{{source}}**. This run you turn recon into a *running clone* of this
+webserver inside the sandbox box: the real software stack, stood up and serving —
+**not** a recording of its pages. The twin is currently OPEN ({{exchange_count}}
+sample(s)); you finish by sealing it once your reconstruction answers like the
+live target.
 
-What recon found so far: **{{stack}}**
+### The blueprint recon already gathered
+- **Stack:** {{stack}}
+- **Services:** {{services}}
+- **Topography:** {{topography}}
 
-This is **reconstruction, not imitation.** Observe the live target, identify its
-real stack — OS, runtime, framework/app, and versions — then pull the matching
-open-source pieces and stand up the genuine software in the box. The twin should
-*be* the system, top to bottom.
+`twin_stack` / `twin_map` / `build_recipe` show the detail. This is what you
+rebuild — the actual server, runtime, app and supporting services, at the
+versions recon detected.
 
-### Each pass is a differential
+### Reconstruct the real thing, not a mock
 
-- **`twin_diff`** compares the live target against the twin as it stands and tells
-  you where it matches, where it has drifted, and where it's missing data. That gap
-  is your work this pass — close it.
-- Get to know the target where you need to: **`recon_dirscan`** maps its
-  directories and endpoints, **`recon_sources`** finds its own source/dependency
-  files, **`recon_subdomains`** shows its footprint, **`http_request`** reads any
-  specific response.
-- Pull and build what you need: download on the phone (`download_file` /
-  `http_request`), move it to the box with `transfer`, and stand the stack up with
-  **`build_run`** — it runs the step on the box and, when it succeeds, captures it
-  into the twin's recipe. Deriving the build is the expensive part; recording it
-  means a later pass (or a fresh box) replays the recipe instead of re-deriving it.
-  `build_recipe` shows what's captured. Read real build output and iterate, don't
-  assume. Capture how the target responds with **`twin_record`** / **`twin_clone`**.
+This is **reconstruction, not imitation.** A known open-source stack (WordPress,
+Drupal, Joomla, Django, Rails, ...) is public and downloadable — stand up the
+GENUINE software so the twin literally *is* the system, top to bottom:
 
-The goal is simple and unforgiving: **zero divergence** between the twin and the
-live target. Drive `twin_diff` to all-match.
+1. **Pull the real software on the phone** (`download_file` / `http_request`) at
+   the detected version, and **`transfer`** it to the box. The net lives on the
+   phone; the box installs and builds.
+2. **Stand the stack up with `build_run`** — web server, language runtime, the
+   app, and the database/cache/services recon found listening. `build_run` runs
+   the step on the box and, when it succeeds, captures it into the **recipe**, so
+   a later pass or a fresh box replays it instead of re-deriving the build (the
+   expensive part). Read the real build output and iterate — don't assume.
+3. **Use exposed source/config as ground truth.** If recon flagged readable
+   `.git`, `.env`, `configuration.php`, backups and the like, pull them and
+   rebuild from the REAL code and config. That is the highest-fidelity path to an
+   identical server — far better than guessing the app's internals.
+4. **Recreate the topography.** The dirs and endpoints recon mapped should exist
+   on your reconstruction; wire the routes, content and config so they do.
+
+### Differential — prove the reconstruction equals the target
+
+- Capture ground truth from the live target with **`http_request`** and record the
+  key responses with **`twin_record`**, so this pass and the antithesis can check
+  the reconstruction against what the real target actually returned.
+- **`twin_diff`** compares the live target against the twin's samples and shows
+  where you match, where you've drifted, and where you're missing data. Drive it
+  toward all-match — that gap is your work this pass.
+- Only when a service is genuinely opaque/bespoke and **cannot** be reconstructed
+  do you fall back to mirroring its observed behavior (recorded responses standing
+  in as the twin).
 
 ### Prove it, then seal
 
-Before sealing, show real evidence the twin matches — quote `twin_diff` output, not
-a claim. Then **`twin_seal`** to freeze this pass, and `finish_run` with what the
-twin is and which divergences you closed. Each time you're run with "build" you get
-another pass to tighten it further — only seal a pass that genuinely improved the
-match.
+Before sealing, show real evidence the reconstruction behaves like the target —
+quote actual responses from your running stack beside the live ones, not a claim.
+Make sure the **recipe** captures how it was built (`build_recipe`), so it's
+reproducible on a fresh box. Then **`twin_seal`** to freeze this pass, and
+`finish_run` with what the twin now is and which gaps you closed. Each time you're
+run with "build" you get another pass to tighten the match — only seal a pass that
+genuinely improved fidelity.
