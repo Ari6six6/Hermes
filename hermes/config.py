@@ -44,6 +44,10 @@ DEFAULTS: dict = {
     "scan_top_ports": 1000,  # nmap --top-ports N; the fallback uses its curated set
     "scan_timeout": 2.0,  # per-port connect/read timeout for the fallback scan
     "scan_workers": 100,  # concurrent probes in the fallback connect scan
+    "survey_on_build": True,  # map dirs/endpoints + exposed files (topography) on build
+    "survey_max_paths": 400,  # cap on probed paths in the webserver survey
+    "survey_workers": 40,  # concurrent probes in the survey
+    "survey_subdomains": True,  # also pull the domain's subdomains from CT logs (crt.sh)
     "twin_port": 8900,  # local port the runtime twin serves on (in the sandbox)
     "max_model_len": 0,  # 0 = pick automatically from detected VRAM
     "gpu_port": 8000,

@@ -207,7 +207,9 @@ def cmd_project(cfg, args: str) -> None:
             project.equip_tool(t)
         report = _clone_target(cfg, twin, url, seal=False)
         print(green(f"build project '{name}' created — recon done: "
-                    f"{report.get('services', 0)} service(s), stack fingerprinted (open)."))
+                    f"{report.get('services', 0)} service(s), "
+                    f"{report.get('dirs', 0)} dir(s)/endpoint(s), "
+                    f"{report.get('exposed', 0)} exposed file(s), stack fingerprinted (open)."))
         print(dim("Set the task with `mission edit`, then `run build` — the agent "
                   "stands up a runtime clone of the real webserver from this recon "
                   "(each `run build` is another reconstruction pass)."))
@@ -487,6 +489,7 @@ def _clone_target(cfg, twin, url: str, seal: bool = False) -> dict:
     for the recon/builder agent to reconstruct and seal."""
     from hermes.twin import clone as clone_mod
     from hermes.twin import scan as scan_mod
+    from hermes.twin import survey as survey_mod
     colors = {"exchange": green, "spec": cyan, "error": red, "done": cyan, "stack": cyan}
 
     def on_event(kind, text):
@@ -519,6 +522,23 @@ def _clone_target(cfg, twin, url: str, seal: bool = False) -> dict:
         twin.store_services(result.to_dict())
         print(scan_mod.format_scan(result))
         report["services"] = len(result.services)
+
+    # Webserver topography: which dirs/endpoints exist and what's readable
+    # (source/config/VCS/backups) — the shape of the target, not its content.
+    if cfg.get("survey_on_build", True):
+        print(dim(f"surveying the webserver topography at {url}..."))
+        sv = survey_mod.survey(
+            url,
+            fetch=clone_mod._httpx_fetch,
+            max_paths=cfg.get("survey_max_paths", 400),
+            workers=cfg.get("survey_workers", 40),
+            include_subdomains=cfg.get("survey_subdomains", True),
+            on_event=lambda t: print(cyan(f"  {t}")),
+        )
+        twin.store_topography(sv.to_dict())
+        print(survey_mod.format_survey(sv))
+        report["dirs"] = len(sv.dirs)
+        report["exposed"] = len(sv.exposed)
     return report
 
 
