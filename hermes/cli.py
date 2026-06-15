@@ -84,6 +84,18 @@ def _gpu_status_line(cfg, state) -> str:
     return f"{state['host']}:{state['port']} ({up}{f', ctx {ctx}' if ctx else ''})"
 
 
+def _ensure_twin_tunnel(cfg, sb_state) -> None:
+    """Best effort: keep the phone->VPS tunnel to the runtime twin alive so
+    twin_request reaches it. Harmless if the twin isn't serving yet."""
+    ep = sandbox_endpoint_from_state(sb_state)
+    if ep is None or pid_alive(sb_state.get("tunnel_pid", 0)):
+        return
+    local = cfg.get("twin_local_port", cfg.get("twin_port", 8900))
+    remote = cfg.get("twin_port", 8900)
+    sb_state["tunnel_pid"] = ep.start_tunnel(local, remote)
+    save_sandbox_state(sb_state)
+
+
 def _sandbox_status_line() -> str:
     state = load_sandbox_state()
     if not state.get("host"):
@@ -154,7 +166,10 @@ def cmd_run(cfg, args: str) -> None:
         return
     state = load_gpu_state()
     gpu = endpoint_from_state(state)
-    sandbox = sandbox_endpoint_from_state(load_sandbox_state())
+    sb_state = load_sandbox_state()
+    sandbox = sandbox_endpoint_from_state(sb_state)
+    if sandbox is not None and project.twin().is_sealed():
+        _ensure_twin_tunnel(cfg, sb_state)
     if cfg.get("backend") != "mock":
         if state.get("host"):
             _ensure_tunnel(cfg, state)
@@ -683,31 +698,39 @@ def cmd_build(cfg, args: str) -> None:
             twin.seal()
             print(green(f"twin sealed — {len(twin.exchanges())} sample(s). Build phase open."))
 
-    elif sub == "serve":  # run the twin on the box for the solution to hit
+    elif sub == "serve":  # run the twin in a container on the VPS for the solution to hit
         if not twin.is_sealed():
             print(yellow("twin isn't sealed yet — seal it first "
                          "(the agent's twin_seal, or `build seal`)."))
             return
-        state = load_gpu_state()
-        ep = endpoint_from_state(state)
+        sb_state = load_sandbox_state()
+        ep = sandbox_endpoint_from_state(sb_state)
         if ep is None:
-            print(yellow("no GPU box attached — `gpu attach` first."))
+            print(yellow("no sandbox host — `sandbox add ssh://user@host[:port]` first "
+                         "(the VPS where the runtime twin lives)."))
             return
         from hermes.twin import deploy as twin_deploy
         port = cfg.get("twin_port", 8900)
         clean = rest.strip() == "clean"
         note = " (clean respin)" if clean else ""
-        print(dim(f"spinning the twin up on the box (localhost:{port}) from the blueprint{note} ..."))
+        print(dim(f"spinning the twin up in a container on the sandbox host{note} ..."))
         report = twin_deploy.deploy(
             ep, twin, port, clean=clean,
+            base_image=cfg.get("twin_base_image", twin_deploy.DEFAULT_BASE_IMAGE),
+            runtime=sb_state.get("runtime", ""),
             step_timeout=cfg.get("twin_serve_step_timeout", 1800),
             on_event=lambda t: print(dim("  " + t)),
         )
         if report["ok"]:
-            via = "reconstructed from recipe" if report.get("source") == "blueprint" \
-                else "recorded-response responder (no recipe yet)"
-            print(green(f"twin live in the sandbox: http://127.0.0.1:{port}")
-                  + dim(f"  [{via}]"))
+            # Tunnel the VPS's loopback twin port back to the phone so the agent's
+            # twin_request (and the operator's scripts) reach it at localhost.
+            if sb_state.get("tunnel_pid"):
+                kill_pid(sb_state["tunnel_pid"])
+            local = cfg.get("twin_local_port", port)
+            sb_state["tunnel_pid"] = ep.start_tunnel(local, port)
+            save_sandbox_state(sb_state)
+            print(green(f"twin live on the sandbox host: container {report.get('container')}")
+                  + dim(f"  — reachable here at http://127.0.0.1:{local}"))
         else:
             print(red(f"twin failed to start: {report.get('error')}"))
             if report.get("log_path"):

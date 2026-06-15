@@ -12,6 +12,11 @@ vLLM, and gives you an agent that lives across two machines:
   kernel-level `unshare -n` speed bump when the box allows it) and, above all,
   an honest ask: the box *can* reach the network, we ask the agent not to, so
   all egress stays visible on the phone;
+- **the sandbox host** (optional) — a small, persistent VPS you register with
+  `sandbox add`, where the **runtime twin** of a target service runs inside a
+  container: a real, isolated, always-on clone you (and the code the agent
+  writes) can hit on localhost, decoupled from the rented-on-demand GPU. See
+  [docs/sandbox-twin.md](docs/sandbox-twin.md);
 - **your servers** (optional) — real machines you register with `host add`.
   The agent reaches them from the phone: reads run free, anything mutating
   asks you first.

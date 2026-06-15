@@ -1,26 +1,32 @@
 """Twin tools: the agent's window onto the runtime twin of the target.
 
-The twin is a faithful, SAFE, local copy of the target — not the live service. It
-serves the target's real captured responses exactly, and declares a miss for
-anything it hasn't seen rather than inventing an answer. When the agent needs a
-case the twin lacks, `twin_expand` asks the clone step (on the phone) to go learn
-it and fold it in — the agent itself never touches the live target.
+The twin is the **real reconstructed software** running in a contained sandbox on
+the VPS — a faithful, SAFE, live clone of the target, not the live service itself.
+`twin_request` hits that running clone over the tunnel and returns whatever it
+really does. The recorded request/response samples are kept only as *ground truth*
+to prove the running twin matches the target (twin_map shows that surface;
+twin_reground re-checks one against the live target).
 
 These tools only register when a sealed twin exists for the project.
 """
 
 from __future__ import annotations
 
+import httpx
+
 from hermes.tools._common import twin_for as _twin
 from hermes.tools.base import obj_schema, tool
 
 
+def _twin_base_url(ctx) -> str:
+    return f"http://127.0.0.1:{ctx.cfg.get('twin_local_port', 8900)}"
+
+
 @tool(
     "twin_request",
-    "Send a request to the runtime twin of the target — a faithful, SAFE local "
-    "copy, not the live service. Returns the target's real captured response, or "
-    "a MISS if the twin hasn't seen that request (it never fabricates one). The "
-    "real response is ground truth: your reimplementation must match it.",
+    "Send a request to the runtime twin — the REAL reconstructed software running "
+    "in the sandbox, a faithful SAFE clone of the target (never the live service). "
+    "Returns exactly what the running twin does. Build your solution to match it.",
     obj_schema(
         {
             "path": {"type": "string", "description": "request path, e.g. /users/1"},
@@ -32,20 +38,26 @@ from hermes.tools.base import obj_schema, tool
     ),
 )
 def twin_request(args, ctx):
-    twin = _twin(ctx)
-    if not twin.is_sealed():
-        return "ERROR: no sealed twin for this project."
     method = (args.get("method") or "GET").upper()
-    ex = twin.respond(method, args["path"], args.get("query", ""), args.get("body"))
-    if ex is None:
+    path = args["path"]
+    if not path.startswith("/"):
+        path = "/" + path
+    query = (args.get("query") or "").lstrip("?")
+    url = _twin_base_url(ctx) + path + (f"?{query}" if query else "")
+    body = args.get("body")
+    try:
+        resp = httpx.request(method, url, content=body, timeout=20)
+    except httpx.HTTPError as e:
         return (
-            f"TWIN MISS for {method} {args['path']}. The twin has no real response "
-            "for this request and does not invent one. If you need this case, call "
-            "twin_expand to have the clone layer learn it from the target."
+            f"ERROR: could not reach the runtime twin at {_twin_base_url(ctx)} "
+            f"[{type(e).__name__}: {e}]. The twin is the real software running in "
+            "the sandbox — ask the operator to `build serve` it (and `sandbox add` "
+            "a VPS first if none is attached)."
         )
+    ctype = resp.headers.get("content-type", "")
     return (
-        f"[twin: real captured response]\nHTTP {ex.status} {ex.content_type}\n"
-        f"request: {ex.label()}\n\n{ex.response_body}"
+        f"[twin: live runtime response]\nHTTP {resp.status_code} {ctype}\n"
+        f"request: {method} {path}{('?' + query) if query else ''}\n\n{resp.text}"
     )
 
 

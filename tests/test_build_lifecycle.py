@@ -1,6 +1,8 @@
 """End-to-end: walk a build project through both phases and the seal between them,
 proving the registry/prompt/gates compose across the boundary."""
 
+from tests.conftest import serve_reference_twin
+
 from hermes import agent, package
 from hermes.llm import MockBackend
 
@@ -10,8 +12,9 @@ yes = lambda *a, **k: True
 
 def _run(project, cfg, prompt, script, gpu):
     cfg.set("plan_build_tasks", False)  # planner is exercised in test_planner_referee
-    return agent.run(project, prompt, cfg, MockBackend(script), gpu=gpu, env={},
-                     confirm_fn=yes)
+    with serve_reference_twin(project.twin_dir, cfg.get("twin_local_port", 8900)):
+        return agent.run(project, prompt, cfg, MockBackend(script), gpu=gpu, env={},
+                         confirm_fn=yes)
 
 
 def test_recon_to_build_full_lifecycle(project, cfg):

@@ -1,6 +1,8 @@
 """The build-mode antithesis: diff the solution against the twin, and reject a
 PASS that has no executed evidence (anti-collusion — same weights, no free pass)."""
 
+from tests.conftest import serve_reference_twin
+
 from hermes import agent
 from hermes.llm import MockBackend
 from hermes.twin.model import Exchange
@@ -19,8 +21,9 @@ def _seal_twin(project):
 
 def _run(project, cfg, script):
     cfg.set("plan_build_tasks", False)  # planner is exercised in test_planner_referee
-    return agent.run(project, "build /ping", cfg, MockBackend(script),
-                     gpu=SANDBOX, env={}, confirm_fn=lambda *a, **k: True)
+    with serve_reference_twin(project.twin_dir, cfg.get("twin_local_port", 8900)):
+        return agent.run(project, "build /ping", cfg, MockBackend(script),
+                         gpu=SANDBOX, env={}, confirm_fn=lambda *a, **k: True)
 
 
 def test_antithesis_passes_when_outputs_match(project, cfg):

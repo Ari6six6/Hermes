@@ -1,31 +1,35 @@
-"""Run the twin on the box: spin the reconstructed server up from the blueprint.
+"""Run the twin on the sandbox host: a contained Linux box running the real
+reconstructed software.
 
-`build serve` stands the twin up at http://127.0.0.1:<port> inside the sandbox so
-the solution the agent writes — and its tests — can hit it like the real target,
-while staying offline and safe.
+`build serve` stands the twin up inside a **container** on the VPS sandbox host,
+listening on `127.0.0.1:<port>` of the VPS (then tunneled to the phone), so the
+solution the agent writes — and its tests — hit a faithful, *isolated*, live clone
+of the target instead of the real service.
 
-The twin is the **real software**, and the blueprint that rebuilds it lives on the
+The twin is the **real software**, reconstructed from a blueprint that lives on the
 phone: the project's `twin/recipe.jsonl` (the ordered, captured reconstruction
-steps) plus the recon manifest. So when you change GPUs or reset the box, `build
-serve` replays that blueprint onto the fresh box and the runtime Linux server
-comes back up — no agent turns, no reinventing the wheel. The serving step binds
-`$TWIN_PORT`, which we export to `port`.
+steps) plus the recon manifest. `build serve` boots a fresh container from a base
+image and replays the recipe steps *inside it* (each step is a `docker exec`), so
+the whole stack — packages, runtime, app — is installed and launched in a
+contained system. Change VPSes or wipe the box and the same blueprint respins the
+runtime twin; no agent turns, no reinventing the wheel.
 
-When there is no recipe yet (an opaque/bespoke target captured only as recorded
-responses), we fall back to the self-contained stdlib replay server
-(`server.py`) as a reference responder for diffing — it is not the twin.
+There is no recorded-response fallback: a twin is the real running software or it
+is nothing. With no recipe yet, `build serve` says so and points you at `run
+build` to derive the reconstruction.
 """
 
 from __future__ import annotations
 
+import re
+import shlex
 import time
 from pathlib import Path
 
-from hermes.ssh import anchored_path, shell_path
 from hermes.twin.model import TwinModel
 
-SERVER_SRC = Path(__file__).parent / "server.py"
 REMOTE_SUBDIR = "twin-runtime"
+DEFAULT_BASE_IMAGE = "ubuntu:22.04"
 
 
 def serve_log_path(model: TwinModel) -> Path:
@@ -42,9 +46,18 @@ def _write_serve_log(model: TwinModel, lines: list[str]) -> None:
     except OSError:
         pass
 
-# A network-free liveness probe: a TCP connect to the port, in stdlib python
-# (always on the box — curl is bounced to the phone by the net policy). Exit 0
-# means something is listening.
+
+def container_name(model: TwinModel) -> str:
+    """A stable, docker-safe container name per project (the twin dir's parent is
+    the project dir). Keeps respins idempotent and lets `stop` find it."""
+    raw = model.root.parent.name or "hermes"
+    safe = re.sub(r"[^A-Za-z0-9_.-]", "-", raw).strip("-") or "hermes"
+    return f"hermes-twin-{safe}"
+
+
+# A network-free liveness probe against the published port, in stdlib python
+# (always on the VPS). Exit 0 means something is listening on the host side of
+# the container's port mapping.
 _HEALTHCHECK = (
     "python3 - <<'PY'\n"
     "import socket,sys\n"
@@ -59,129 +72,119 @@ def _alive(ep, port: int) -> bool:
     return rc == 0
 
 
-def _stop_cmd(port: int) -> str:
-    """pkill -f matches an unanchored regex against the whole command line, so a
-    bare `server.py . {port}` for port 890 would also kill twins on 8900-8909
-    (and the dots would match any char). Escape the dots and anchor the port at
-    the end of the argv (the server launches as `python3 server.py . <port>`)."""
-    return rf"pkill -f 'server\.py \. {int(port)}$' 2>/dev/null || true"
+def _container_exists(ep, name: str, runtime: str) -> bool:
+    rc, out, _ = ep.run(
+        f"{runtime} ps -a --filter name=^{shlex.quote(name)}$ --format '{{{{.Names}}}}'"
+    )
+    return rc == 0 and name in (out or "")
 
 
 def deploy(ep, model: TwinModel, port: int, on_event=None,
-           step_timeout: int = 1800, clean: bool = False) -> dict:
-    """Bring the twin up on localhost:<port>. Replays the blueprint recipe to
-    stand up the real reconstructed server; falls back to the stdlib replay
-    responder when there's no recipe. With clean=True, wipes the runtime dir and
-    frees the port first for a fresh respin. Returns {"ok", "port", "remote_dir",
-    "log", "source", "log_path"} (or {"ok": False, "error", ...})."""
+           step_timeout: int = 1800, clean: bool = False,
+           base_image: str = DEFAULT_BASE_IMAGE, runtime: str = "") -> dict:
+    """Bring the twin up inside a container on the sandbox host, listening on
+    127.0.0.1:<port> of the VPS. Replays the blueprint recipe *inside* the
+    container. With clean=True, tears down any existing container first for a
+    fresh respin. Returns {"ok", "port", "container", "log", "source",
+    "log_path"} (or {"ok": False, "error", ...})."""
     def emit(text):
         if on_event:
             on_event(text)
 
-    recipe = model.recipe()
-    if recipe:
-        return _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout, clean)
-    emit("no recipe yet — serving the recorded-response reference responder")
-    return _serve_replay(ep, model, port, emit)
-
-
-def _serve_from_blueprint(ep, model, port, recipe, emit, step_timeout, clean) -> dict:
-    """Replay the captured reconstruction steps to stand the real stack up, with
-    a transcript written to the phone for debugging."""
-    remote_dir = anchored_path(REMOTE_SUBDIR, ep.remote_workspace)
-    rq = shell_path(remote_dir)
-    transcript: list[str] = []
     log_path = str(serve_log_path(model))
 
+    if not runtime:
+        from hermes.sandbox.provision import SandboxError, ensure_runtime
+        try:
+            runtime = ensure_runtime(ep, on_event=emit)
+        except SandboxError as e:
+            _write_serve_log(model, [f"# {e}"])
+            return {"ok": False, "error": str(e), "source": "container",
+                    "log_path": log_path}
+
+    recipe = model.recipe()
+    if not recipe:
+        msg = ("no reconstruction recipe yet — a twin is the real running software, "
+               "not a recording. Derive the build with `run build`: the builder "
+               "captures each working step into the blueprint (build_run), then "
+               "`build serve` replays it into a container here.")
+        _write_serve_log(model, ["# " + msg])
+        return {"ok": False, "error": msg, "source": "container", "log_path": log_path}
+
+    return _serve_container(ep, model, port, recipe, emit, step_timeout, clean,
+                            base_image, runtime, log_path)
+
+
+def _serve_container(ep, model, port, recipe, emit, step_timeout, clean,
+                     base_image, runtime, log_path) -> dict:
+    """Boot a fresh container and replay the captured reconstruction steps inside
+    it, with a transcript written to the phone for debugging."""
+    name = container_name(model)
+    transcript: list[str] = []
+
+    def done(extra: dict) -> dict:
+        _write_serve_log(model, transcript)
+        base = {"container": name, "source": "container", "log_path": log_path}
+        base.update(extra)
+        return base
+
+    if not clean and _container_exists(ep, name, runtime) and _alive(ep, port):
+        emit(f"already serving on :{port} (container {name})")
+        transcript.append(f"# already up on :{port}")
+        return done({"ok": True, "port": port, "log": "already up"})
+
+    # Fresh respin: drop any old container so the recipe replays clean.
+    ep.run(f"{runtime} rm -f {shlex.quote(name)} 2>/dev/null || true")
     if clean:
-        ep.run(f"fuser -k {int(port)}/tcp 2>/dev/null || true")  # free the port
-        ep.run(f"rm -rf {rq}")                                   # wipe stale build
-        emit("clean respin — freed the port and wiped the runtime dir")
+        emit("clean respin — removed any existing container")
 
-    ep.run(f"mkdir -p {rq}")
-    ep.run("ip link set lo up 2>/dev/null || true")  # fresh net ns leaves lo down
+    # A long-lived container is the contained Linux box; we exec the recipe into
+    # it. Publish the port only on the VPS's loopback (then it's tunneled to the
+    # phone), never the public internet.
+    run_cmd = (
+        f"{runtime} run -d --name {shlex.quote(name)} "
+        f"-p 127.0.0.1:{int(port)}:{int(port)} "
+        f"-e TWIN_PORT={int(port)} -w /twin {shlex.quote(base_image)} sleep infinity"
+    )
+    rc, out, err = ep.run(run_cmd, timeout=step_timeout)
+    transcript.append(f"$ {run_cmd}\n[rc {rc}] {(err or out).strip()[-300:]}".rstrip())
+    if rc != 0:
+        return done({"ok": False,
+                     "error": f"could not start the container: {(err or out).strip()[-300:]}"})
+    ep.run(f"{runtime} exec {shlex.quote(name)} sh -lc 'mkdir -p /twin'")
+    emit(f"container {name} up from {base_image} — replaying {len(recipe)} step(s)")
 
-    if not clean and _alive(ep, port):
-        emit(f"already serving on :{port}")
-        _write_serve_log(model, [f"already up on :{port}"])
-        return {"ok": True, "port": port, "remote_dir": remote_dir,
-                "log": "already up", "source": "blueprint", "log_path": log_path}
-
-    emit(f"spinning up from blueprint — replaying {len(recipe)} recipe step(s)")
     for i, step in enumerate(recipe, 1):
         cmd = step.get("cmd", "")
         note = step.get("note") or cmd
-        full = f"cd {rq} && export TWIN_PORT={int(port)} && {cmd}"
-        rc, out, err = ep.run(full, timeout=step_timeout)
+        # Each step runs in /twin inside the container, with TWIN_PORT exported.
+        exec_cmd = (
+            f"{runtime} exec -e TWIN_PORT={int(port)} {shlex.quote(name)} "
+            f"sh -lc {shlex.quote(cmd)}"
+        )
+        rc, out, err = ep.run(exec_cmd, timeout=step_timeout)
         tail = (err or out or "").strip()[-500:]
-        transcript.append(f"$ {cmd}\n[rc {rc}] {tail}".rstrip())
+        transcript.append(f"$ exec: {cmd}\n[rc {rc}] {tail}".rstrip())
         if rc != 0:
-            _write_serve_log(model, transcript)
-            return {"ok": False, "remote_dir": remote_dir, "source": "blueprint",
-                    "log_path": log_path,
-                    "error": f"recipe step {i}/{len(recipe)} failed "
-                             f"({note[:60]}): {tail[-300:]}"}
+            return done({"ok": False,
+                         "error": f"recipe step {i}/{len(recipe)} failed "
+                                  f"({note[:60]}): {tail[-300:]}"})
         emit(f"step {i}/{len(recipe)} ok: {note[:60]}")
 
     ep.run("sleep 1")  # let a just-launched daemon bind the port
     up = _alive(ep, port)
     transcript.append(f"# health check :{port} -> {'listening' if up else 'NOT listening'}")
-    _write_serve_log(model, transcript)
     if up:
-        emit(f"runtime server up on :{port}")
-        return {"ok": True, "port": port, "remote_dir": remote_dir,
-                "log": f"blueprint replayed, listening on :{port}",
-                "source": "blueprint", "log_path": log_path}
-    return {"ok": False, "remote_dir": remote_dir, "source": "blueprint",
-            "log_path": log_path,
-            "error": f"recipe replayed but nothing is listening on :{port} — the "
-                     "serving step must bind $TWIN_PORT and run in the background "
-                     "(e.g. nohup ... &). See the serve log."}
+        emit(f"runtime twin up on :{port} (container {name})")
+        return done({"ok": True, "port": port,
+                     "log": f"recipe replayed in {name}, listening on :{port}"})
+    return done({"ok": False,
+                 "error": f"recipe replayed but nothing is listening on :{port}. The "
+                          "serving step must bind 0.0.0.0:$TWIN_PORT (not 127.0.0.1, "
+                          "or the published port can't reach it) and run in the "
+                          "background (nohup ... &). See the serve log."})
 
 
-def _serve_replay(ep, model: TwinModel, port: int, emit) -> dict:
-    """Fallback: push the stdlib replay server + recorded exchanges and launch it.
-    This is the reference responder for opaque targets, not the reconstructed twin.
-    Writes a transcript to the phone (like the blueprint path) so a failed launch
-    is debuggable without the box."""
-    remote_dir = anchored_path(REMOTE_SUBDIR, ep.remote_workspace)
-    rq = shell_path(remote_dir)
-    log_path = str(serve_log_path(model))
-    transcript: list[str] = []
-
-    def fail(error: str) -> dict:
-        _write_serve_log(model, transcript)
-        return {"ok": False, "error": error, "remote_dir": remote_dir,
-                "source": "replay", "log_path": log_path}
-
-    ep.run(f"mkdir -p {rq}")
-
-    for name, path in (("server.py", SERVER_SRC),
-                       ("exchanges.jsonl", model.exchanges_path)):
-        if not Path(path).exists():
-            transcript.append(f"# missing local file: {name}")
-            return fail(f"missing local file: {name}")
-        rc, err = ep.run_in_from_file(f"cat > {rq}/{name}", Path(path))
-        transcript.append(f"$ push {name} -> [rc {rc}] {err.strip()[-300:]}".rstrip())
-        if rc != 0:
-            return fail(f"failed to push {name}: {err.strip()[-300:]}")
-        emit(f"pushed {name}")
-
-    # loopback up (a fresh net namespace leaves lo down), restart any old twin.
-    ep.run("ip link set lo up 2>/dev/null || true")
-    ep.run(_stop_cmd(port))
-    ep.run(f"cd {rq} && nohup python3 server.py . {port} > twin.log 2>&1 < /dev/null & echo $!")
-    emit(f"launched on :{port}")
-
-    rc, out, _ = ep.run(f"sleep 1; cat {rq}/twin.log 2>/dev/null")
-    log = (out or "").strip()
-    transcript.append(f"# launch :{port} -> {log or '(no twin.log)'}")
-    if "twin up" not in log:
-        return fail(log or "twin did not report startup")
-    _write_serve_log(model, transcript)
-    return {"ok": True, "port": port, "remote_dir": remote_dir, "log": log,
-            "source": "replay", "log_path": log_path}
-
-
-def stop(ep, port: int) -> None:
-    ep.run(_stop_cmd(port))
+def stop(ep, model: TwinModel, runtime: str = "docker") -> None:
+    """Tear the twin container down on the sandbox host."""
+    ep.run(f"{runtime} rm -f {shlex.quote(container_name(model))} 2>/dev/null || true")
