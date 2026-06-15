@@ -167,6 +167,39 @@ def test_qwen_official_serves_fp8_on_vllm(cfg):
     assert "--tool-call-parser hermes" in cmd
 
 
+def test_qwen_official_blocked_on_ampere(cfg):
+    # No native FP8 → vLLM uses Marlin, which rejects this model's 4304-wide
+    # projection (not a multiple of 64). Catch it in the planner with guidance
+    # instead of letting vLLM crash deep in load_weights after a 27GB download.
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen-official")
+    with pytest.raises(ProvisionError) as exc:
+        plan_serve([("NVIDIA A100-SXM4-40GB", 40960)], cfg, spec)
+    msg = str(exc.value)
+    assert "native" in msg and "Marlin" in msg
+    assert "GGUF" in msg  # points at the Ampere-friendly alternative
+
+
+def test_qwen_official_serves_on_native_fp8_gpu(cfg):
+    # Ada/Blackwell have native FP8, so the Marlin restriction never applies.
+    from hermes.models import get_spec
+
+    spec = get_spec("qwen-official")
+    plan = plan_serve([("NVIDIA RTX 5090", 32760)], cfg, spec)  # Blackwell
+    assert not any("Ampere" in n for n in plan.notes)
+
+
+def test_marlin_safe_model_still_serves_on_ampere(cfg):
+    # Hermes' FP8 weights are Marlin-safe, so Ampere just gets the slow-path
+    # note — no block.
+    from hermes.models import HERMES
+
+    assert HERMES.fp8_marlin_safe is True
+    plan = plan_serve([("NVIDIA A100-SXM4-80GB", 81920)], cfg, HERMES)
+    assert any("Ampere" in n for n in plan.notes)
+
+
 def test_qwen_official_fits_32gb_card(cfg):
     from hermes.models import get_spec
 

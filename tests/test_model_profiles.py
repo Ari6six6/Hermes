@@ -35,6 +35,13 @@ def test_every_added_model_has_a_distinct_tuned_build():
         ), f"{spec.key} is not actually tuned"
 
 
+def test_qwen_official_flagged_marlin_unsafe():
+    # Its 4304-wide projection isn't a multiple of 64, so FP8 can't go through
+    # Marlin (Ampere weight-only). The other FP8 model (Hermes) is safe.
+    assert models.QWEN_OFFICIAL.fp8_marlin_safe is False
+    assert models.HERMES.fp8_marlin_safe is True
+
+
 def test_gguf_models_skip_forced_tool_choice():
     # llama.cpp under --jinja doesn't honour named tool_choice
     assert models.QWEN.supports_forced_tool_choice is False

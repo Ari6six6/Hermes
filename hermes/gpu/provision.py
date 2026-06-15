@@ -4,8 +4,10 @@ tunnel, and poll until the OpenAI endpoint answers.
 
 Each model declares its runtime in hermes.models:
 - **vLLM** (Hermes-4.3-36B, FP8 safetensors). Hopper/Ada/Blackwell run FP8
-  natively; Ampere falls back to weight-only FP8 (Marlin) — works, a bit
-  slower; pre-Ampere is unsupported.
+  natively; Ampere falls back to weight-only FP8 (Marlin) — works for models
+  whose weight dims are all multiples of 64, a bit slower. A model that fails
+  that test (e.g. Qwen3.6-27B's 4304-wide projection) can't load FP8 on Ampere,
+  so the planner blocks it there with guidance instead of crashing mid-load.
 - **llama.cpp** (Qwen3.6-27B, Q5_K GGUF). The native GGUF runtime —
   `llama-server`, built with CUDA on the box. Speaks the same OpenAI wire
   protocol, so nothing downstream changes.
@@ -49,6 +51,16 @@ class ProvisionError(Exception):
     pass
 
 
+# Cards with no FP8 tensor cores (Ampere and older). On these, vLLM can't run
+# FP8 natively and falls back to weight-only FP8 via Marlin — works for most
+# models, but Marlin's repack rejects weight dims not divisible by 64.
+_NO_NATIVE_FP8_TAGS = ("A100", "A40", "A6000", "3090")
+
+
+def lacks_native_fp8(names: list[str]) -> bool:
+    return any(tag in n for n in names for tag in _NO_NATIVE_FP8_TAGS)
+
+
 @dataclass
 class ServePlan:
     tensor_parallel: int
@@ -90,9 +102,18 @@ def plan_serve(gpus: list[tuple[str, int]], cfg, spec: ModelSpec | None = None) 
             "shrinks automatically to keep loops healthy."
         )
     names = [name for name, _ in gpus]
-    if spec.server == "vllm" and any(
-        "A100" in n or "A40" in n or "3090" in n or "A6000" in n for n in names
-    ):
+    if spec.server == "vllm" and lacks_native_fp8(names):
+        if not spec.fp8_marlin_safe:
+            raise ProvisionError(
+                f"{spec.label} can't serve on {', '.join(names)}: this GPU has "
+                "no native FP8, so vLLM falls back to weight-only FP8 (Marlin), "
+                "whose repack needs every weight dim to be a multiple of 64 — "
+                "this model has a 4304-wide projection that isn't, so the load "
+                "aborts mid-way. Serve it on a native-FP8 GPU (Hopper/Ada/"
+                "Blackwell — H100/H200, L40S, RTX 4090/5090/6000 Pro), or pick a "
+                "GGUF Qwen build (HauhauCS 27B or DavidAU 40B), which runs "
+                "natively on this card via llama.cpp."
+            )
         notes.append("Ampere GPU: FP8 runs as weight-only (Marlin) — works, a bit slower.")
     return ServePlan(
         tensor_parallel=tensor_parallel,

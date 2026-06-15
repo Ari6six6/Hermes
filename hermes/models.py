@@ -40,6 +40,11 @@ class ModelSpec:
     tokenizer: str | None = None  # override tokenizer source (GGUF sometimes needs it)
     ready: bool = True
     notes_extra: list = field(default_factory=list)  # extra serve-time warnings
+    # FP8-only: are all weight dims a multiple of 64? On GPUs without native FP8
+    # (Ampere and older) vLLM serves FP8 weight-only via Marlin, whose repack
+    # kernel rejects any output dim not divisible by 64. A model that fails that
+    # test can only run FP8 on a native-FP8 GPU (Hopper/Ada/Blackwell).
+    fp8_marlin_safe: bool = True
 
     # ---- per-model build profile ------------------------------------------
     # The app's loop, package, and tools were tuned around Hermes. Nothing in
@@ -185,6 +190,12 @@ QWEN_OFFICIAL = ModelSpec(
     quantization="fp8",
     tool_call_parser="hermes",
     ready=False,
+    # Qwen3.6-27B has a 4304-wide projection (4304 = 64·67.25). Marlin's FP8
+    # repack — the weight-only path Ampere falls back to — needs every dim to be
+    # a multiple of 64, so on-the-fly FP8 only loads on a native-FP8 GPU
+    # (Hopper/Ada/Blackwell). On Ampere the planner steers the operator to a
+    # GGUF Qwen build instead of letting vLLM crash mid-load.
+    fp8_marlin_safe=False,
     # Build profile: Qwen3 thinking-mode. Alibaba's published sampling for
     # reasoning is temp 0.6 / top_p 0.95 / top_k 20 / min_p 0 (greedy decoding
     # is explicitly discouraged); a little presence_penalty keeps long tool
