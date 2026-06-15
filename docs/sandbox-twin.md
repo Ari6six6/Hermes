@@ -193,14 +193,11 @@ Divergence is the score; the goal is all-match. First pass is the expensive one
   `build_run` captures each working reconstruction step into `twin/recipe.jsonl`,
   so a later pass or a fresh box replays the recipe (`build_recipe`) instead of the
   agent re-deriving the build — the expensive derivation is paid once.
-  - Network policy (settled): the box **may install and build software** (`apt`,
-    `pip`, `npm`, `git clone`, …) — those keep their network so reconstruction
-    works. **Raw egress and anything that talks to the target** (`curl`, `wget`,
-    `scp`, `rsync`, …) is bounced to the phone, where egress stays visible, and
-    every other command loses the network at the kernel level (`unshare -n`) on
-    boxes that support it. Recon is unaffected — those tools are phone-side — so
-    "all recon through the phone" holds automatically. `allow_gpu_network=True`
-    lifts the split entirely.
+  - Network policy: reconstruction happens **inside the twin container**, which
+    has network, so `build_run`'s installs/clones (`apt`, `pip`, `npm`, `git
+    clone`, …) run there freely — the container boundary is the isolation, not a
+    network cage. The separate GPU box keeps its own deny-list (raw egress and
+    target traffic stay off it) for the general `remote_shell` compute work.
 - Context: build work is log/diff heavy; **~16k tokens is a floor, 32k
   comfortable**. The package budget already scales to the served context and
   truncates tool output, and the differential approach carries forward only the
@@ -208,18 +205,13 @@ Divergence is the score; the goal is all-match. First pass is the expensive one
 
 ## What's next
 
-1. **Build derivation inside the container.** Today `build_run` derives the recipe
-   on the GPU box (`remote_shell`), while `build serve` replays it inside a
-   container on the sandbox host. Next is to derive *in* the twin container on the
-   VPS so the recipe is validated in the exact environment it serves from (and the
-   recon/build phase's "pull on phone → transfer → build" flow points at the
-   sandbox host, not the GPU box).
-2. **Firecracker microVM (phase 2).** When the VPS exposes `/dev/kvm`, boot the
+1. **Firecracker microVM (phase 2).** When the box exposes `/dev/kvm`, boot the
    reconstructed image as a microVM instead of a container for stronger isolation
    (`hermes/sandbox` already probes `kvm`). Cheap VPSes usually can't, so the
    container path is the default.
-3. **End-to-end shakeout** on a real target + VPS: drive `sandbox add` → recon →
-   seal → `build serve` → thesis/antithesis once against an actual service, and
-   tune the prompts from what the 36B model actually does.
-4. **Builder-side proof gate**: a harder gate could require the builder to show a
+2. **End-to-end shakeout** on a real target + VPS: drive `sandbox provision` →
+   recon → `build_run` (in the container) → seal → `build serve` →
+   thesis/antithesis once against an actual service, and tune the prompts from
+   what the 36B model actually does.
+3. **Builder-side proof gate**: a harder gate could require the builder to show a
    real reference-vs-twin match before it's allowed to seal.

@@ -8,8 +8,6 @@ OPEN; sealing ends the phase and hands off to the build agents.
 
 from __future__ import annotations
 
-import json
-
 from hermes.tools._common import twin_for as _twin
 from hermes.tools.base import obj_schema, tool
 from hermes.twin.model import Exchange
@@ -134,11 +132,12 @@ def twin_diff(args, ctx):
 
 @tool(
     "build_run",
-    "Run a reconstruction step on the box AND capture it into the twin's recipe "
-    "when it succeeds — so a later pass or a fresh box can rebuild the stack by "
-    "replaying the recipe instead of you re-deriving every step (that derivation "
-    "is the expensive part). Use it for the commands that stand up the stack. "
-    "Network steps still belong on the phone.",
+    "Run a reconstruction step INSIDE the twin container AND capture it into the "
+    "twin's recipe when it succeeds — so a later pass or a fresh box can rebuild "
+    "the stack by replaying the recipe instead of you re-deriving every step (that "
+    "derivation is the expensive part). The container has network, so installs and "
+    "clones (apt, pip, npm, git clone, ...) run here. Make the final serving step "
+    "bind 0.0.0.0:$TWIN_PORT and run in the background (nohup ... &).",
     obj_schema(
         {"command": {"type": "string"},
          "note": {"type": "string", "description": "what this step does (optional)"},
@@ -147,19 +146,29 @@ def twin_diff(args, ctx):
     ),
 )
 def build_run(args, ctx):
-    if ctx.registry is None:
-        return "ERROR: registry unavailable"
+    from hermes.sandbox.provision import SandboxError
+    from hermes.twin import deploy
+
     twin = _twin(ctx)
     if not twin.exists():
         return "ERROR: no twin for this project."
-    call = {"command": args["command"]}
-    if args.get("timeout"):
-        call["timeout"] = args["timeout"]
-    out = ctx.registry.dispatch("remote_shell", json.dumps(call), ctx)
-    if out.startswith("exit code 0"):
+    if twin.is_sealed():
+        return "ERROR: the twin is sealed — building is over for this twin."
+    if ctx.sandbox is None:
+        return "ERROR: no sandbox executor available to run the build container."
+    port = ctx.cfg.get("twin_port", 8900)
+    base = ctx.cfg.get("twin_base_image", deploy.DEFAULT_BASE_IMAGE)
+    try:
+        runtime, name = deploy.ensure_build_container(ctx.sandbox, twin, port, base)
+    except SandboxError as e:
+        return f"ERROR: {e}"
+    timeout = min(int(args.get("timeout") or 600), 1800)
+    rc, out, err = deploy.exec_step(ctx.sandbox, name, args["command"], port, runtime, timeout)
+    body = ((out or "") + (("\n[stderr]\n" + err) if err else "")).strip() or "(no output)"
+    if rc == 0:
         twin.add_step(args["command"], str(args.get("note", "")))
-        return f"[recorded to recipe — {len(twin.recipe())} step(s)]\n{out}"
-    return f"[not recorded — the step didn't cleanly succeed]\n{out}"
+        return f"[recorded to recipe — {len(twin.recipe())} step(s)] exit 0\n{body}"
+    return f"[not recorded — exit {rc}, the step didn't cleanly succeed]\n{body}"
 
 
 @tool(
