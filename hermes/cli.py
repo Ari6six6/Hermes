@@ -597,13 +597,36 @@ def cmd_build(cfg, args: str) -> None:
             return
         from hermes.twin import deploy as twin_deploy
         port = cfg.get("twin_port", 8900)
-        print(dim(f"deploying the twin to the box on localhost:{port} ..."))
-        report = twin_deploy.deploy(ep, twin, port, on_event=lambda t: print(dim("  " + t)))
+        print(dim(f"spinning the twin up on the box (localhost:{port}) from the blueprint ..."))
+        report = twin_deploy.deploy(
+            ep, twin, port,
+            step_timeout=cfg.get("twin_serve_step_timeout", 1800),
+            on_event=lambda t: print(dim("  " + t)),
+        )
         if report["ok"]:
+            via = "reconstructed from recipe" if report.get("source") == "blueprint" \
+                else "recorded-response responder (no recipe yet)"
             print(green(f"twin live in the sandbox: http://127.0.0.1:{port}")
-                  + dim(f"  ({report['log']})"))
+                  + dim(f"  [{via}]"))
         else:
             print(red(f"twin failed to start: {report.get('error')}"))
+
+    elif sub == "blueprint":  # show the portable blueprint that respins the twin
+        if not twin.exists():
+            print(yellow("no target yet — `project build <name> <url>` first"))
+            return
+        recipe = twin.recipe()
+        print(bold(f"blueprint for '{project.name}'") + dim(f"  ({project.twin_dir})"))
+        print(twin.summary())
+        if recipe:
+            print(cyan(f"\nrecipe ({len(recipe)} step(s)) — `build serve` replays this "
+                       "on any box to respin the runtime server:"))
+            for i, s in enumerate(recipe, 1):
+                note = dim(f"   # {s['note']}") if s.get("note") else ""
+                print(f"  {i}. {s['cmd']}{note}")
+        else:
+            print(dim("\n(no recipe yet — reconstruct the stack with `run build`; "
+                      "build_run captures each working step into the blueprint)"))
 
     elif sub == "clear":
         import shutil
@@ -683,7 +706,7 @@ HELP = f"""\
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
 {cyan('project')} build <name> <url>   reconstruct a target into a twin to work against
-{cyan('build')} win <text> | clone | seal | serve | show | clear   the twin for this project
+{cyan('build')} win <text> | clone | seal | serve | blueprint | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
 {cyan('config')} [key [value]]  view/set configuration
 {cyan('quit')}                  exit

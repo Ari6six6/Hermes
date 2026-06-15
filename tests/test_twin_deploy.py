@@ -12,6 +12,49 @@ def _sealed_twin(project):
     return twin
 
 
+def _twin_with_recipe(project):
+    twin = project.twin()
+    twin.init(source="https://api.example.com")
+    twin.add_step("apt-get install -y nginx", "install nginx")
+    twin.add_step("nohup nginx -g 'daemon off;' &", "run on $TWIN_PORT")
+    twin.add_exchange(Exchange(method="GET", path="/", status=200, response_body="hi"))
+    twin.seal()
+    return twin
+
+
+def test_deploy_from_blueprint_replays_recipe(project):
+    twin = _twin_with_recipe(project)
+    # order: mkdir, lo-up, healthcheck-pre(down), step1, step2, sleep, healthcheck-post(up)
+    ep = FakeEndpoint(responses=[
+        (0, "", ""), (0, "", ""), (1, "", ""),         # pre-check: not up yet
+        (0, "", ""), (0, "", ""), (0, "", ""),         # 2 steps + sleep
+        (0, "", ""),                                   # post-check: listening
+    ])
+    report = deploy.deploy(ep, twin, 8900)
+    assert report["ok"] and report["source"] == "blueprint"
+    assert any("export TWIN_PORT=8900" in c for c in ep.calls)
+    assert any("nginx" in c for c in ep.calls)
+
+
+def test_deploy_from_blueprint_short_circuits_when_already_up(project):
+    twin = _twin_with_recipe(project)
+    # mkdir, lo-up, healthcheck-pre(up) -> returns without replaying
+    ep = FakeEndpoint(responses=[(0, "", ""), (0, "", ""), (0, "", "")])
+    report = deploy.deploy(ep, twin, 8900)
+    assert report["ok"] and "already up" in report["log"]
+    assert not any("export TWIN_PORT" in c for c in ep.calls)  # no replay
+
+
+def test_deploy_from_blueprint_fails_on_bad_step(project):
+    twin = _twin_with_recipe(project)
+    # mkdir, lo-up, pre-check(down), step1 fails
+    ep = FakeEndpoint(responses=[(0, "", ""), (0, "", ""), (1, "", ""),
+                                 (1, "", "package not found")])
+    report = deploy.deploy(ep, twin, 8900)
+    assert not report["ok"]
+    assert "recipe step 1" in report["error"]
+
+
 def test_deploy_pushes_files_launches_and_confirms(project):
     twin = _sealed_twin(project)
     # pops in order: mkdir, push server.py, push exchanges.jsonl, lo-up, pkill,

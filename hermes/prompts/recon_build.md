@@ -26,9 +26,19 @@ GENUINE software so the twin literally *is* the system, top to bottom:
    phone; the box installs and builds.
 2. **Stand the stack up with `build_run`** — web server, language runtime, the
    app, and the database/cache/services recon found listening. `build_run` runs
-   the step on the box and, when it succeeds, captures it into the **recipe**, so
-   a later pass or a fresh box replays it instead of re-deriving the build (the
-   expensive part). Read the real build output and iterate — don't assume.
+   the step on the box and, when it succeeds, captures it into the **recipe** —
+   the portable blueprint that lives on the phone. `build serve` replays that
+   recipe to respin the whole runtime server on any box (a fresh GPU, a reset
+   sandbox) without re-deriving anything, so make every step **idempotent and
+   self-contained**, in order. Read the real build output and iterate — don't
+   assume.
+   - **Wire it like the target.** Bring up the supporting services (database,
+     cache, queue) on the ports the app expects and connect them, so the clone
+     behaves like the real system end to end — that accurate wiring is what makes
+     it a safe place to test.
+   - **The web server must bind `$TWIN_PORT`** (build serve exports it) and the
+     final serving step must run in the background (`nohup ... &` / a daemon), so
+     replaying the recipe leaves the server listening rather than blocking.
 3. **Use exposed source/config as ground truth.** If recon flagged readable
    `.git`, `.env`, `configuration.php`, backups and the like, pull them and
    rebuild from the REAL code and config. That is the highest-fidelity path to an
