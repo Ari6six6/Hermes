@@ -48,6 +48,27 @@ def test_clone_follows_same_origin_links_only(project, monkeypatch):
     assert not any("evil.com" in u for u in urls)  # off-origin never followed
 
 
+def test_clone_skips_static_assets(project, monkeypatch):
+    monkeypatch.setattr(clone_mod.time, "sleep", lambda *_: None)
+    twin = project.twin()
+    twin.init(source="https://shop.example.com")
+    home = ("<a href='/products'>products</a>"
+            "<a href='/logo.png'>logo</a>"
+            "<link href='/style.css'>"
+            "<a href='/bundle.js'>js</a>")
+    fetch = FakeFetch({
+        "/": (200, {"content-type": "text/html"}, home),
+        "/products": (200, {"content-type": "text/html"}, "products page"),
+    })
+    clone(twin, "https://shop.example.com", fetch=fetch, delay=0,
+          include_discovery=False)
+    urls = {u for _, u in fetch.calls}
+    assert any(u.endswith("/products") for u in urls)   # pages still followed
+    assert not any(u.endswith("/logo.png") for u in urls)
+    assert not any(u.endswith("/style.css") for u in urls)
+    assert not any(u.endswith("/bundle.js") for u in urls)
+
+
 def test_clone_mines_openapi_spec(project, monkeypatch):
     monkeypatch.setattr(clone_mod.time, "sleep", lambda *_: None)
     twin = project.twin()

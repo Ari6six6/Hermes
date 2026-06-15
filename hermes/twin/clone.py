@@ -5,7 +5,10 @@ This is the ONE component that touches the live target, and it is operator-drive
 poke a live service. It is benign by construction: read-only methods only, a hard
 cap on requests, a polite delay. It gathers as much as it responsibly can — the
 API spec if the service publishes one, common discovery endpoints, and a
-same-origin crawl of whatever it finds — then seals the model.
+same-origin crawl of whatever it finds — then seals the model. The crawl follows
+pages and endpoints, not static assets (images, fonts, media, stylesheets,
+bundles): we want to know what apps and services run, not what the page looks
+like, and the stack fingerprint never reads those bodies.
 
 `fetch` is injected so the gathering logic is fully testable without a network.
 """
@@ -30,6 +33,31 @@ UA = "Mozilla/5.0 (Linux; Android) HermesAgent/0.1 (benign clone)"
 
 _HREF_RE = re.compile(r'href=["\']([^"\']+)["\']', re.I)
 _URLISH_RE = re.compile(r'"(/[A-Za-z0-9_\-./]+)"')
+
+# Static assets — images, fonts, media, stylesheets, bundles, archives. We're
+# after the stack and the endpoints (what apps and services run), not the page's
+# appearance. The fingerprint only reads headers, cookies, paths and HTML/JSON
+# bodies, so following these wastes requests and bloats the twin with binary
+# bodies that nothing downstream uses. The crawl skips them.
+_ASSET_EXTS = frozenset((
+    # images
+    "png", "jpg", "jpeg", "gif", "webp", "svg", "ico", "bmp", "avif", "tiff",
+    # fonts
+    "woff", "woff2", "ttf", "otf", "eot",
+    # audio / video
+    "mp4", "webm", "ogg", "mp3", "wav", "avi", "mov", "m4a", "flac",
+    # styles / client bundles / sourcemaps
+    "css", "js", "mjs", "map",
+    # downloadable blobs
+    "pdf", "zip", "gz", "tgz", "tar", "rar", "7z", "dmg", "exe", "bin",
+))
+
+
+def _is_asset(path: str) -> bool:
+    """True for paths that point at a static asset rather than a page/endpoint."""
+    last = urlsplit(path).path.rsplit("/", 1)[-1]
+    ext = last.rsplit(".", 1)
+    return len(ext) == 2 and ext[1].lower() in _ASSET_EXTS
 
 # Response headers worth keeping: enough to fingerprint the stack, not the noise.
 _KEEP_HEADERS = ("content-type", "content-length", "etag", "server",
@@ -97,7 +125,7 @@ def _links(base_url, status, ctype, text):
     out = []
     for href in found:
         norm = _same_origin(base_url, href)
-        if norm:
+        if norm and not _is_asset(norm):
             out.append(norm)
     return out
 
