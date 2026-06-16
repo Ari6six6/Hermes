@@ -92,14 +92,19 @@ and it is told so plainly (`hermes/prompts/build_mode.md`).
   routes back to the same clone step to learn it and fold it in.
   The building agent still never touches the live target.
 
-## The accuracy rule: the twin never invents a response
+## The accuracy rule: the twin is the real running software
 
-This is the heart of it. For a request the twin has really seen, it replays the
-target's real response **byte-for-byte** (`X-Twin: exact`). For anything else it
-returns a **504 twin-miss** (`X-Twin: miss`) — never a fabricated body. So
-everything the agent builds against is something the real service really did, and
-parity is ironclad where it's claimed. Coverage grows by *learning more real
-exchanges* (expand), never by guessing.
+This is the heart of it. The twin isn't a recording — it is the genuine
+reconstructed stack, running in a container, so `twin_request` returns whatever
+that software really does. Fidelity comes from reconstructing the real OS /
+runtime / app at the versions recon found, not from memorizing responses.
+
+The recorded request/response samples are kept as **ground truth**: the diff-only
+reference responder (`server.py`) replays them byte-for-byte (`X-Twin: exact`, or
+a `504 X-Twin: miss` for anything unseen) so a candidate can be compared against
+what the real service actually did. `twin_diff` drives the reconstruction toward
+matching them; coverage grows by *learning more real exchanges* (`twin_expand` /
+`twin_reground`), never by guessing.
 
 The honest edge: from outside you can clone observable behavior — reads, response
 shapes, status/error semantics — with near-perfect fidelity. You cannot perfectly
@@ -119,8 +124,9 @@ they target observable behavior.
 | Builder tools | `hermes/tools/builder.py` | The builder's hands: `twin_record` / `twin_clone` / `twin_diff` / `build_run` / `build_recipe` / `twin_seal`. Register only while the twin is OPEN. |
 | Recon/build framing | `hermes/prompts/recon_build.md` | Injected while the twin is OPEN: "get to know the target, stand up the twin, prove it, seal it." |
 | Blueprint | `twin/recipe.jsonl` + manifest | The portable reconstruction blueprint, on the phone: the ordered `build_run` steps plus the recon fingerprint/services/topography. `build serve` replays it onto any box to respin the runtime server; `build blueprint` shows it. |
-| Reference responder | `hermes/twin/server.py` | Self-contained stdlib HTTP server that exact-replays recorded samples or misses. **Not the twin** — a reference responder for diffing, and the `build serve` fallback when there's no recipe. Runs standalone: `python3 server.py <model-dir> <port>`. |
-| Deploy | `hermes/twin/deploy.py` | `build serve` — replays the blueprint recipe on the box to stand the **real reconstructed server** up on `localhost:<twin_port>` (binding `$TWIN_PORT`), so the solution and its tests hit a live clone of the target. Falls back to the reference responder when no recipe exists. |
+| Reference responder | `hermes/twin/server.py` | Self-contained stdlib HTTP server that exact-replays recorded samples or misses. **Not the twin** — a diff-only reference for comparing a candidate against ground truth offline. Runs standalone: `python3 server.py <model-dir> <port>`. |
+| Sandbox | `hermes/sandbox/` | The local box Hermes runs on, where the twin container lives. `local_endpoint()` runs commands here (no SSH); `capabilities()` probes the container runtime and `/dev/kvm`. `sandbox status/provision`. |
+| Deploy | `hermes/twin/deploy.py` | `build serve` — boots a **local container** from a base image and replays the blueprint recipe *inside it* (`docker exec` per step) to stand the **real reconstructed server** up, published on `127.0.0.1:<twin_port>`. There is no recorded-response fallback: a twin is the real running software, or `build serve` says there's no recipe yet and points at `run build`. |
 | Antithesis | `hermes/prompts/antithesis.md` + `agent._verify(build=True)` | Diffs the solution against the twin; anti-collusion — a PASS with no executed evidence is rejected as FAIL. |
 | Build tools | `hermes/tools/twin.py` | `twin_request` / `twin_map` / `twin_stack` / `twin_expand` / `twin_reground`. Register only when a sealed twin exists. |
 | Build framing | `hermes/prompts/build_mode.md` | Injected once sealed: "build against the safe twin; show, don't claim; here's the mission + winning condition." |
@@ -143,12 +149,16 @@ during build, and the registry + system prompt swap with it:
 ## Operator flow
 
 ```
-project build shopapi https://shop.example.com   # create project, seed an OPEN twin
+sandbox provision                                 # ensure a container runtime is on this box (once)
+project build shopapi https://shop.example.com    # create project, seed an OPEN twin
 mission edit                                       # the task (win = match the target, baked in)
 run build                                          # refinement pass: diff vs target, close the gap, seal
-build serve                                        # ensure the reconstruction is running on the box
-run build /products to meet the mission           # thesis builds against the sealed twin
+build serve                                        # boot a local container and run the reconstruction in it
+run build /products to meet the mission            # thesis builds against the sealed twin at localhost
 ```
+
+Hermes runs on the VPS, so the twin is a container on the **same box** — reached
+at `127.0.0.1:<twin_port>`, no SSH hop and no tunnel.
 
 `run build` reopens the twin and runs a recon/build pass; run it again to tighten
 the match further. `build serve` ensures the reconstruction is live on the box. The
@@ -170,27 +180,24 @@ Divergence is the score; the goal is all-match. First pass is the expensive one
 
 ### Cost & resources (operating notes)
 
-- The reconstructed twin is ordinary userspace — **RAM/CPU/disk, never VRAM**
-  (VRAM is the model's). It doesn't compete with the model for the scarce resource.
-- `build serve` launches it with `nohup`, so it **stays alive between runs** until
-  `pkill` or the box stops — but the box itself keeps billing while up. When you're
-  done for now, `gpu down` can **pause** the box (Vast stop) rather than destroy it:
-  the disk — weights, the built llama.cpp, and the reconstructed twin — persists, so
-  `gpu up` resumes it and `gpu serve` skips the re-download/rebuild. You hold a
-  hard-won sandbox cheaply instead of trashing it.
+- The twin runs on the **persistent VPS sandbox host**, not the GPU box, so it
+  costs **RAM/CPU/disk on a cheap always-on box** — never VRAM, and nothing on the
+  expensive rented GPU. The two are decoupled: tear the GPU down between sessions
+  and the twin keeps running.
+- `build serve` runs it as a **container** that stays up between runs (and across
+  GPU teardown) until you respin or stop it. A ~4–8GB Ubuntu VPS is plenty for a
+  lean stack; heavier stacks (app + database) want the headroom. Re-`build serve`
+  to respin from the recipe on a fresh or wiped box.
 - The real cost is **agent turns** (one GPU inference each), so a from-scratch
   reconstruction is the expensive event. The cost lever is the **recipe**:
   `build_run` captures each working reconstruction step into `twin/recipe.jsonl`,
   so a later pass or a fresh box replays the recipe (`build_recipe`) instead of the
   agent re-deriving the build — the expensive derivation is paid once.
-  - Network policy (settled): the box **may install and build software** (`apt`,
-    `pip`, `npm`, `git clone`, …) — those keep their network so reconstruction
-    works. **Raw egress and anything that talks to the target** (`curl`, `wget`,
-    `scp`, `rsync`, …) is bounced to the phone, where egress stays visible, and
-    every other command loses the network at the kernel level (`unshare -n`) on
-    boxes that support it. Recon is unaffected — those tools are phone-side — so
-    "all recon through the phone" holds automatically. `allow_gpu_network=True`
-    lifts the split entirely.
+  - Network policy: reconstruction happens **inside the twin container**, which
+    has network, so `build_run`'s installs/clones (`apt`, `pip`, `npm`, `git
+    clone`, …) run there freely — the container boundary is the isolation, not a
+    network cage. The separate GPU box keeps its own deny-list (raw egress and
+    target traffic stay off it) for the general `remote_shell` compute work.
 - Context: build work is log/diff heavy; **~16k tokens is a floor, 32k
   comfortable**. The package budget already scales to the served context and
   truncates tool output, and the differential approach carries forward only the
@@ -198,9 +205,13 @@ Divergence is the score; the goal is all-match. First pass is the expensive one
 
 ## What's next
 
-1. **End-to-end shakeout** on a real target + box: drive recon → seal → `build
-   serve` → thesis/antithesis once against an actual service, and tune the prompts
-   from what the 36B model actually does.
-2. **Builder-side proof gate**: today `twin_seal` requires samples + a strong
-   prompt; a harder gate could require the builder to show a real
-   reference-vs-twin match before it's allowed to seal.
+1. **Firecracker microVM (phase 2).** When the box exposes `/dev/kvm`, boot the
+   reconstructed image as a microVM instead of a container for stronger isolation
+   (`hermes/sandbox` already probes `kvm`). Cheap VPSes usually can't, so the
+   container path is the default.
+2. **End-to-end shakeout** on a real target + VPS: drive `sandbox provision` →
+   recon → `build_run` (in the container) → seal → `build serve` →
+   thesis/antithesis once against an actual service, and tune the prompts from
+   what the 36B model actually does.
+3. **Builder-side proof gate**: a harder gate could require the builder to show a
+   real reference-vs-twin match before it's allowed to seal.

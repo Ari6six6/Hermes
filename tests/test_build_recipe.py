@@ -11,11 +11,15 @@ def _open_twin(project):
     return twin
 
 
-def _ctx(project, cfg, gpu):
-    # build_run dispatches remote_shell, so it needs a live registry + box.
-    registry = build_registry(project, cfg, lambda *a, **k: True)
-    ctx = ToolContext(project=project, cfg=cfg, gpu=gpu)
-    ctx.registry = registry
+# build_run execs inside the twin container via ctx.sandbox. The bring-up of a
+# fresh container is: ensure_runtime probe(docker) · ps -a(not exists) · run -d ·
+# exec mkdir · then the step exec. These helpers script that.
+def _create_then(step_result):
+    return [(0, "docker\n", ""), (0, "", ""), (0, "cid", ""), (0, "", ""), step_result]
+
+
+def _ctx(project, cfg, sandbox):
+    ctx = ToolContext(project=project, cfg=cfg, sandbox=sandbox)
     return ctx
 
 
@@ -30,38 +34,49 @@ def test_model_recipe_roundtrip(project):
 
 def test_build_run_records_successful_step(project, cfg):
     _open_twin(project)
-    gpu = FakeEndpoint(responses=[(0, "Reading package lists... done", "")])
-    out = build_run.fn({"command": "tar x,zf wp.tgz", "note": "unpack"}, _ctx(project, cfg, gpu))
+    sb = FakeEndpoint(responses=_create_then((0, "unpacked", "")))
+    out = build_run.fn({"command": "tar xzf wp.tgz", "note": "unpack"}, _ctx(project, cfg, sb))
     assert "recorded to recipe" in out
-    assert project.twin().recipe()[0]["cmd"] == "tar x,zf wp.tgz"
+    assert project.twin().recipe()[0]["cmd"] == "tar xzf wp.tgz"
+    # the step actually ran inside the container, with TWIN_PORT exported
+    assert any("docker exec" in c and "TWIN_PORT" in c and "tar xzf wp.tgz" in c
+               for c in sb.calls)
 
 
 def test_build_run_does_not_record_failure(project, cfg):
     _open_twin(project)
-    gpu = FakeEndpoint(responses=[(1, "", "No such file")])
-    out = build_run.fn({"command": "make"}, _ctx(project, cfg, gpu))
+    sb = FakeEndpoint(responses=_create_then((1, "", "No such file")))
+    out = build_run.fn({"command": "make"}, _ctx(project, cfg, sb))
     assert "not recorded" in out
     assert project.twin().recipe() == []
 
 
-def test_build_run_records_provisioning_install(project, cfg):
-    # Installing software on the box is allowed now, so a successful apt install
-    # runs and is captured into the recipe.
+def test_build_run_records_network_install_in_container(project, cfg):
+    # The container has network, so installs/clones run INSIDE it and are captured
+    # (no phone bounce — that was the GPU-box policy; the container is the sandbox).
     _open_twin(project)
-    gpu = FakeEndpoint(responses=[(0, "nginx is the newest version", "")])
-    out = build_run.fn({"command": "apt-get install -y nginx", "note": "web server"},
-                       _ctx(project, cfg, gpu))
+    sb = FakeEndpoint(responses=_create_then((0, "Cloning into 'wp'...", "")))
+    out = build_run.fn({"command": "git clone https://x/wp.git", "note": "pull app"},
+                       _ctx(project, cfg, sb))
     assert "recorded to recipe" in out
-    assert project.twin().recipe()[0]["cmd"] == "apt-get install -y nginx"
+    assert project.twin().recipe()[0]["cmd"] == "git clone https://x/wp.git"
 
 
-def test_build_run_does_not_record_bounced_egress(project, cfg):
-    # A raw download is bounced to the phone, never run on the box — not captured.
+def test_build_run_reuses_existing_container(project, cfg):
     _open_twin(project)
-    gpu = FakeEndpoint(responses=[(0, "should not be reached", "")])
-    out = build_run.fn({"command": "curl -O https://x/y.tgz"}, _ctx(project, cfg, gpu))
-    assert "not recorded" in out
-    assert project.twin().recipe() == []
+    # probe(docker) · ps -a(EXISTS) -> skip run/mkdir · step exec
+    sb = FakeEndpoint(responses=[(0, "docker\n", ""),
+                                 (0, "hermes-twin-testproj\n", ""),
+                                 (0, "ok", "")])
+    out = build_run.fn({"command": "echo hi"}, _ctx(project, cfg, sb))
+    assert "recorded to recipe" in out
+    assert not any("run -d" in c for c in sb.calls)  # didn't recreate the container
+
+
+def test_build_run_needs_a_sandbox(project, cfg):
+    _open_twin(project)
+    out = build_run.fn({"command": "echo hi"}, _ctx(project, cfg, None))
+    assert out.startswith("ERROR") and "sandbox" in out
 
 
 def test_build_recipe_lists_steps(project, cfg):

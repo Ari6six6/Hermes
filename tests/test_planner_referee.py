@@ -2,6 +2,8 @@
 builder/antithesis deadlock). Both are on by default in build mode and gated by
 config. Driven against the scripted mock backend."""
 
+from tests.conftest import serve_reference_twin
+
 from hermes import agent
 from hermes.llm import MockBackend
 from hermes.twin.model import Exchange
@@ -19,8 +21,9 @@ def _seal(project):
 
 
 def _run(project, cfg, script, gpu=None):
-    return agent.run(project, "make /ping return pong", cfg, MockBackend(script),
-                     gpu=gpu, env={}, confirm_fn=lambda *a, **k: True)
+    with serve_reference_twin(project.twin_dir, cfg.get("twin_port", 8900)):
+        return agent.run(project, "make /ping return pong", cfg, MockBackend(script),
+                         gpu=gpu, env={}, confirm_fn=lambda *a, **k: True)
 
 
 def _transcript(project, run="0001"):

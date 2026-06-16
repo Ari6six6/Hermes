@@ -18,19 +18,43 @@ def _ctx(project, cfg):
     return ToolContext(project=project, cfg=cfg)
 
 
-def test_twin_request_returns_real_response(project, cfg):
+class _Resp:
+    def __init__(self, status, text, ctype="application/json"):
+        self.status_code = status
+        self.text = text
+        self.headers = {"content-type": ctype}
+
+
+def test_twin_request_hits_the_live_twin(project, cfg, monkeypatch):
     _seal(project, [Exchange(method="GET", path="/users/1", status=200,
                              response_body='{"id":1}', content_type="application/json")])
+    captured = {}
+
+    def fake_request(method, url, **kw):
+        captured["method"], captured["url"] = method, url
+        return _Resp(200, '{"id":1}')
+
+    monkeypatch.setattr("hermes.tools.twin.httpx.request", fake_request)
     out = twin_request.fn({"path": "/users/1"}, _ctx(project, cfg))
-    assert "real captured response" in out
+    assert "live runtime response" in out
     assert '{"id":1}' in out and "HTTP 200" in out
+    assert captured["method"] == "GET"
+    assert captured["url"].endswith("/users/1")
+    assert "127.0.0.1:8900" in captured["url"]  # the tunneled twin port
 
 
-def test_twin_request_miss_points_to_expand(project, cfg):
+def test_twin_request_unreachable_points_to_build_serve(project, cfg, monkeypatch):
+    import httpx
+
     _seal(project, [Exchange(method="GET", path="/users/1", status=200, response_body="x")])
+
+    def boom(*a, **k):
+        raise httpx.ConnectError("connection refused")
+
+    monkeypatch.setattr("hermes.tools.twin.httpx.request", boom)
     out = twin_request.fn({"path": "/users/2"}, _ctx(project, cfg))
-    assert "TWIN MISS" in out
-    assert "twin_expand" in out  # never fabricates; points to growth
+    assert "could not reach the runtime twin" in out
+    assert "build serve" in out
 
 
 def test_twin_map_shows_routes_and_goal(project, cfg):

@@ -27,6 +27,7 @@ from hermes.gpu import (
 )
 from hermes.llm import make_backend
 from hermes.project import Project, ProjectError
+from hermes.sandbox import capabilities as sandbox_capabilities, local_endpoint
 from hermes.ssh import SSHEndpoint, SSHError, kill_pid, parse_ssh_string, pid_alive
 from hermes.ui import bold, cyan, dim, green, magenta, red, yellow
 
@@ -76,6 +77,14 @@ def _gpu_status_line(cfg, state) -> str:
     up = "vllm:up" if _probe_vllm(cfg) else "vllm:DOWN"
     ctx = state.get("served_ctx")
     return f"{state['host']}:{state['port']} ({up}{f', ctx {ctx}' if ctx else ''})"
+
+
+def _sandbox_status_line() -> str:
+    caps = sandbox_capabilities(local_endpoint())
+    if not caps["runtime"]:
+        return "local — no container runtime yet (installs on first `build serve`)"
+    bits = [caps["runtime"]] + (["kvm"] if caps["kvm"] else [])
+    return "local (" + ", ".join(bits) + ")"
 
 
 def _edit_file(path: Path) -> None:
@@ -135,6 +144,7 @@ def cmd_run(cfg, args: str) -> None:
         return
     state = load_gpu_state()
     gpu = endpoint_from_state(state)
+    sandbox = local_endpoint()  # the twin runs in a container on this same box
     if cfg.get("backend") != "mock":
         if state.get("host"):
             _ensure_tunnel(cfg, state)
@@ -146,6 +156,7 @@ def cmd_run(cfg, args: str) -> None:
     spec = resolve(cfg)
     env = {
         "gpu_status": _gpu_status_line(cfg, state),
+        "sandbox_status": _sandbox_status_line(),
         "remote_workspace": state.get("remote_workspace", "~/hermes-workspace"),
         "context_window": state.get("served_ctx", 0),
         "model_identity": spec.identity,
@@ -171,7 +182,7 @@ def cmd_run(cfg, args: str) -> None:
         )
 
     backend = make_backend(cfg)
-    agent.run(project, prompt, cfg, backend, gpu=gpu, env=env)
+    agent.run(project, prompt, cfg, backend, gpu=gpu, env=env, sandbox=sandbox)
 
 
 def cmd_project(cfg, args: str) -> None:
@@ -434,6 +445,37 @@ def cmd_gpu(cfg, args: str) -> None:
         print(dim("usage: gpu attach [sshstr] | serve | status | tunnel | up | down"))
 
 
+def cmd_sandbox(cfg, args: str) -> None:
+    """The local sandbox: this box (the VPS Hermes runs on) is where the twin
+    container lives. Nothing to register — `status` shows what it can isolate
+    with, `provision` installs the container runtime."""
+    parts = args.split(maxsplit=1)
+    sub = parts[0] if parts else "status"
+    ep = local_endpoint()
+
+    if sub == "status":
+        caps = sandbox_capabilities(ep)
+        print("container runtime: " + (
+            cyan(caps["runtime"]) if caps["runtime"]
+            else yellow("none yet — `sandbox provision` (or it installs on first `build serve`)")
+        ))
+        print("kvm (microVM-capable): " + (
+            green("yes") if caps["kvm"]
+            else dim("no — running plain containers (expected on a cheap VPS)")
+        ))
+
+    elif sub == "provision":
+        from hermes.sandbox.provision import SandboxError, ensure_runtime
+        try:
+            rt = ensure_runtime(ep, on_event=lambda t: print(dim("  " + t)))
+            print(green(f"{rt} ready."))
+        except SandboxError as e:
+            print(red(e))
+
+    else:
+        print(dim("usage: sandbox status | provision"))
+
+
 def cmd_host(cfg, args: str) -> None:
     parts = args.split()
     sub = parts[0] if parts else "list"
@@ -585,31 +627,26 @@ def cmd_build(cfg, args: str) -> None:
             twin.seal()
             print(green(f"twin sealed — {len(twin.exchanges())} sample(s). Build phase open."))
 
-    elif sub == "serve":  # run the twin on the box for the solution to hit
+    elif sub == "serve":  # run the twin in a local container for the solution to hit
         if not twin.is_sealed():
             print(yellow("twin isn't sealed yet — seal it first "
                          "(the agent's twin_seal, or `build seal`)."))
             return
-        state = load_gpu_state()
-        ep = endpoint_from_state(state)
-        if ep is None:
-            print(yellow("no GPU box attached — `gpu attach` first."))
-            return
         from hermes.twin import deploy as twin_deploy
+        ep = local_endpoint()  # the twin is a container on this same box
         port = cfg.get("twin_port", 8900)
         clean = rest.strip() == "clean"
         note = " (clean respin)" if clean else ""
-        print(dim(f"spinning the twin up on the box (localhost:{port}) from the blueprint{note} ..."))
+        print(dim(f"spinning the twin up in a local container{note} ..."))
         report = twin_deploy.deploy(
             ep, twin, port, clean=clean,
+            base_image=cfg.get("twin_base_image", twin_deploy.DEFAULT_BASE_IMAGE),
             step_timeout=cfg.get("twin_serve_step_timeout", 1800),
             on_event=lambda t: print(dim("  " + t)),
         )
         if report["ok"]:
-            via = "reconstructed from recipe" if report.get("source") == "blueprint" \
-                else "recorded-response responder (no recipe yet)"
-            print(green(f"twin live in the sandbox: http://127.0.0.1:{port}")
-                  + dim(f"  [{via}]"))
+            print(green(f"twin live: container {report.get('container')}")
+                  + dim(f"  — reachable at http://127.0.0.1:{port}"))
         else:
             print(red(f"twin failed to start: {report.get('error')}"))
             if report.get("log_path"):
@@ -717,6 +754,7 @@ HELP = f"""\
 {cyan('tools')}                 list the agent's tools
 {cyan('gpu')} attach [sshstr] | serve | status | tunnel | down   {dim('(alias: g)')}
 {cyan('host')} add <name> <sshstr> [note] | list | rm <name>     your real servers
+{cyan('sandbox')} status | provision                            the local box where the twin container runs
 {cyan('project')} build <name> <url>   reconstruct a target into a twin to work against
 {cyan('build')} win <text> | clone | seal | serve [clean] | blueprint | logs | show | clear   the twin for this project
 {cyan('persona')} edit          edit the persona appended to the system prompt
@@ -744,6 +782,8 @@ def dispatch(cfg, line: str) -> bool:
         cmd_gpu(cfg, rest)
     elif cmd == "host":
         cmd_host(cfg, rest)
+    elif cmd == "sandbox":
+        cmd_sandbox(cfg, rest)
     elif cmd == "build":
         cmd_build(cfg, rest)
     elif cmd == "config":

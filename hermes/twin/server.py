@@ -1,14 +1,14 @@
-"""The runtime twin: a self-contained service that behaves like the target.
+"""A diff-time reference responder over the recorded ground-truth samples.
 
-Generated from a TwinModel, this stands up a real local HTTP server the agent
-(and the code it writes) can hit exactly like the live API — but it is a safe,
-offline copy. It is deliberately STRICT: for a request it has a real captured
-response, it replays that response byte-for-byte; for anything else it returns a
-504 twin-miss (never a fabricated body), which is the signal to grow the model.
+This is NOT the twin. The twin is the real reconstructed software running in a
+container on the sandbox host (see hermes/twin/deploy.py). This stdlib server only
+replays the recorded request/response samples byte-for-byte (504 for anything it
+hasn't seen), which is useful for *diffing* a candidate against ground truth
+offline — never as the thing the agent builds against.
 
 Pure standard library and no `hermes` imports on purpose: this file plus a model
-directory can be copied to the GPU box and run with `python3 server.py <dir>
-<port>` — nothing to install.
+directory can be copied anywhere and run with `python3 server.py <dir> <port>` —
+nothing to install.
 """
 
 from __future__ import annotations
