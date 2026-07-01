@@ -161,6 +161,8 @@ def cmd_run(cfg, args: str) -> None:
         "context_window": state.get("served_ctx", 0),
         "model_identity": spec.identity,
         "model_tool_guidance": spec.tool_guidance,
+        "twin_port": cfg.get("twin_port", 8900),
+        "build_live_touch": cfg.get("build_live_touch", False),
     }
     prompt = args.strip()
     # `run build` is the refinement loop: reopen the twin and run a recon/build

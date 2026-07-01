@@ -92,7 +92,36 @@ def test_twin_tools_register_only_when_sealed(project, cfg):
     assert "twin_request" not in build_registry(project, cfg, yes).names()
     _seal(project, [Exchange(method="GET", path="/", status=200, response_body="ok")])
     names = build_registry(project, cfg, yes).names()
-    assert {"twin_request", "twin_map", "twin_expand"} <= set(names)
+    assert {"twin_request", "twin_map", "twin_stack"} <= set(names)
+
+
+def test_sealed_build_has_no_live_reach_by_default(project, cfg):
+    """Once sealed, `build_live_touch` defaults False: no way at all to reach
+    the live target — not the general web tools, not the narrow twin ones."""
+    yes = lambda *a, **k: True
+    _seal(project, [Exchange(method="GET", path="/", status=200, response_body="ok")])
+    names = build_registry(project, cfg, yes).names()
+    assert "http_request" not in names
+    assert "web_search" not in names
+    assert "twin_expand" not in names
+    assert "twin_reground" not in names
+
+
+def test_build_live_touch_flag_restores_live_tools(project, cfg):
+    yes = lambda *a, **k: True
+    _seal(project, [Exchange(method="GET", path="/", status=200, response_body="ok")])
+    cfg.set("build_live_touch", True)
+    names = build_registry(project, cfg, yes).names()
+    assert {"http_request", "web_search", "twin_expand", "twin_reground"} <= set(names)
+
+
+def test_open_recon_phase_keeps_web_tools(project, cfg):
+    """The OPEN recon/build phase ('pure scanning') is unaffected — it's the
+    sealed build phase that gets cut off."""
+    yes = lambda *a, **k: True
+    project.twin().init(source="https://api.example.com")  # open, not sealed
+    names = build_registry(project, cfg, yes).names()
+    assert "http_request" in names
 
 
 def test_build_mode_block_injected_when_sealed(project):

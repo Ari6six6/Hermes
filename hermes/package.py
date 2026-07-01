@@ -90,7 +90,7 @@ def build_system_prompt(project: Project, env: dict) -> str:
         "toolbox_catalog": toolbox_catalog(),
     }
     system = render(template, variables)
-    phase = recon_build_block(project) or build_mode_block(project)
+    phase = recon_build_block(project) or build_mode_block(project, env)
     if phase:
         system += "\n\n" + phase
     guidance = (env.get("model_tool_guidance") or "").strip()
@@ -163,7 +163,7 @@ def recon_build_block(project: Project) -> str:
     })
 
 
-def build_mode_block(project: Project) -> str:
+def build_mode_block(project: Project, env: dict | None = None) -> str:
     """When a sealed twin exists, tell the agent plainly: it is building against a
     faithful, SAFE copy of the target — a safe execution environment — not the
     live system. This is what unlocks it to work freely without tripping the
@@ -174,7 +174,21 @@ def build_mode_block(project: Project) -> str:
         return ""
     if not twin.is_sealed():
         return ""
+    env = env or {}
     manifest = twin.read_manifest()
+    twin_url = f"http://127.0.0.1:{env.get('twin_port', 8900)}"
+    live_touch = env.get("build_live_touch", False)
+    network_note = (
+        "Live-touch tools (`twin_expand`, `twin_reground`) and general web access "
+        "are available this run, so you technically CAN reach the live target — "
+        "don't, unless the operator explicitly asked you to."
+        if live_touch else
+        "This run has NO path to the live target at all: no `http_request`, no "
+        "`web_search`, no `twin_expand`/`twin_reground` are even registered. "
+        "Everything reachable from here is the twin. If the twin is missing "
+        "something you need, say so in your summary — the operator grows it with "
+        "`run build`."
+    )
     return render(_template("build_mode.md"), {
         "source": manifest.get("source", "(unknown)"),
         "exchange_count": manifest.get("exchange_count", 0),
@@ -184,6 +198,8 @@ def build_mode_block(project: Project) -> str:
         "mission": manifest.get("mission") or "(set the mission with `mission edit`)",
         "win_condition": manifest.get("win_condition")
         or "your solution is correct and behaves like the twin on every input you check",
+        "twin_url": twin_url,
+        "network_note": network_note,
     })
 
 

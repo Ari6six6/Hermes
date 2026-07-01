@@ -191,4 +191,10 @@ def twin_reground(args, ctx):
     return f"ERROR: could not reach the target to re-ground: {r.get('detail')}"
 
 
-TOOLS = [twin_request, twin_map, twin_stack, twin_expand, twin_reground]
+# Never touch the live target — always registered once sealed.
+ALWAYS_TOOLS = [twin_request, twin_map, twin_stack]
+# Do reach the live target (read-only, GET/HEAD only). Gated behind
+# `build_live_touch` in build_registry() — off by default, so a sealed build
+# has zero path to the live target unless the operator turns it back on.
+LIVE_TOUCH_TOOLS = [twin_expand, twin_reground]
+TOOLS = ALWAYS_TOOLS + LIVE_TOUCH_TOOLS

@@ -18,15 +18,16 @@ twin up in a fresh container.)
 
 - The twin is the **real software running in a contained sandbox** — the operator
   brings it up with `build serve`; you reach it through the tunnel.
+- **Sandbox address: `{{twin_url}}`.** This is the twin's real, connectable
+  address. **`twin_request`** already uses it for you — but if a task asks you to
+  write a standalone script or file that "talks to the sandbox," hardcode
+  `{{twin_url}}` in it, never `{{source}}`. `{{source}}` names the live target
+  being modeled; it is not where your code should ever point.
 - **`twin_request`** sends a real request to that running twin and returns exactly
   what it does — status, headers, body. That live behavior is your ground truth:
   build your solution to match it. (If it reports it can't reach the twin, it
   isn't served yet — say so; the operator runs `build serve`.)
-- The recorded request/response samples are kept as ground truth for proving the
-  twin matches the target. **`twin_reground`** re-checks one request against the
-  live target and corrects a sample that has drifted; **`twin_expand`** has the
-  clone step (on the phone) capture more. You never reach the live target
-  yourself.
+- **Network reach this run:** {{network_note}}
 
 **Your mission:** {{mission}}
 
